@@ -36,6 +36,7 @@
 #include <thread>
 #include <vector>
 
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -49,6 +50,25 @@ using namespace usp;
 
 static int g_pass = 0;
 static int g_fail = 0;
+
+/* Portable socket write that suppresses SIGPIPE. */
+static ssize_t sock_write(int fd, const void* buf, size_t len) {
+#ifdef MSG_NOSIGNAL
+    return ::send(fd, buf, len, MSG_NOSIGNAL);
+#else
+    return ::send(fd, buf, len, 0); /* SO_NOSIGPIPE set on accepted fd below */
+#endif
+}
+
+/* Set SO_NOSIGPIPE on a socket (macOS). No-op on other platforms. */
+static void suppress_sigpipe(int fd) {
+#ifdef SO_NOSIGPIPE
+    int v = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &v, sizeof(v));
+#else
+    (void)fd;
+#endif
+}
 
 #define CHECK(expr) \
     do { \
@@ -302,6 +322,8 @@ static void test_get_with_mock_agent() {
         int cli_fd = ::accept(srv_fd, nullptr, nullptr);
         if (cli_fd < 0) { ::close(srv_fd); return; }
 
+        suppress_sigpipe(cli_fd);
+
         /* Consume client handshake. */
         uint8_t sync[4]; ::read(cli_fd, sync, 4);
         uint8_t olen_buf[4]; ::read(cli_fd, olen_buf, 4);
@@ -311,7 +333,7 @@ static void test_get_with_mock_agent() {
         /* Send server handshake. */
         std::string sid = "proto::agent";
         auto hf = make_uds_frame(1, std::vector<uint8_t>(sid.begin(), sid.end()));
-        ::write(cli_fd, hf.data(), hf.size());
+        sock_write(cli_fd, hf.data(), hf.size());
 
         /* Consume GET request. */
         uint8_t sync2[4]; ::read(cli_fd, sync2, 4);
@@ -321,7 +343,7 @@ static void test_get_with_mock_agent() {
 
         /* Send GET response. */
         auto rf = make_uds_frame(3, resp_bytes);
-        ::write(cli_fd, rf.data(), rf.size());
+        sock_write(cli_fd, rf.data(), rf.size());
 
         ::close(cli_fd);
         ::close(srv_fd);
@@ -353,6 +375,9 @@ static void test_get_with_mock_agent() {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 int main() {
+    /* Ignore SIGPIPE globally — sockets may close while session worker reconnects. */
+    ::signal(SIGPIPE, SIG_IGN);
+
     test_usp_error_kinds();
     test_vendor_defined_error_codes();
     test_usp_controller_new_null();

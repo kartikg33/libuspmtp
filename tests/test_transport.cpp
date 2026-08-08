@@ -37,6 +37,7 @@
 #include <vector>
 
 /* POSIX */
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -275,12 +276,11 @@ static void test_handshake_and_send_recv() {
     auto transport_result = Transport::connect(sock_path,
                                                std::chrono::seconds(5),
                                                "proto::client");
-    server.join();
 
     CHECK(std::holds_alternative<Transport>(transport_result));
 
     if (auto* t = std::get_if<Transport>(&transport_result)) {
-        /* Send a record. */
+        /* Send a record — this unblocks the server thread. */
         auto send_err = t->send(test_rec);
         CHECK(!send_err.has_value());
 
@@ -295,6 +295,9 @@ static void test_handshake_and_send_recv() {
             ++g_pass;
         }
     }
+
+    /* Wait for server thread to finish (after client has sent/received). */
+    server.join();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -302,6 +305,9 @@ static void test_handshake_and_send_recv() {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 int main() {
+    /* Ignore SIGPIPE — sockets may close during tests. */
+    ::signal(SIGPIPE, SIG_IGN);
+
     test_constants();
     test_transport_error_kinds();
     test_uds_frame_encoding();

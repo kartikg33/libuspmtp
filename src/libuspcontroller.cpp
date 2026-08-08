@@ -70,13 +70,6 @@ static int with_panic_boundary(auto&& f) noexcept {
     }
 }
 
-/** Convert a null-terminated C string to std::string; returns error code. */
-static int cstr_to_str(const char* ptr, std::string& out) {
-    if (!ptr) return USP_FFI_ERR_NULL_POINTER;
-    out = ptr;
-    return USP_FFI_OK;
-}
-
 /** Write value into a caller-supplied buffer. */
 static int write_c_string(const std::string& value,
                            char* out_ptr, size_t out_len) {
