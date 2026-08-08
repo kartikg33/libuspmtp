@@ -1,0 +1,50 @@
+.DS_Store
+tmp/
+
+# C++ build directories
+build/
+cmake-build-*/
+out/
+bin/
+obj/
+
+# CMake / Ninja generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+*.ninja
+.ninja_deps
+.ninja_log
+
+# Compiled objects and libraries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+
+# Executables and debug symbols
+*.exe
+*.out
+*.app
+*.dSYM/
+
+# Precompiled headers and dependency files
+*.gch
+*.pch
+*.d
+
+# Coverage artifacts
+*.gcno
+*.gcda
+*.gcov
+
+# IDE/editor metadata
+.idea/
+.vscode/
