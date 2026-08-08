@@ -42,7 +42,7 @@
 #include <unistd.h>
 
 /* Include the C FFI header to test error code helpers. */
-#include "libuspcontroller.h"
+#include "libuspmtp.h"
 
 using namespace usp;
 

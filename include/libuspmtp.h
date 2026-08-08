@@ -17,9 +17,9 @@
  */
 
 /*
- * libuspcontroller.h
+ * libuspmtp.h
  *
- * Public C API for libuspcontroller – a USP (TR-369) client library that
+ * Public C API for libuspmtp – a USP (TR-369) client library that
  * communicates with OB-USPA (OpenBroadband USP Agent) over a UNIX domain
  * socket using the OB-USPA UDS MTP frame format.
  *
@@ -86,8 +86,8 @@
  * usp_error_is_vendor_defined() helper.
  */
 
-#ifndef LIBUSP_CONTROLLER_H
-#define LIBUSP_CONTROLLER_H
+#ifndef LIBUSPMTP_H
+#define LIBUSPMTP_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -95,8 +95,8 @@
 /* ── Export/import visibility ─────────────────────────────────────────────── */
 
 #if defined(_WIN32)
-#  if defined(LIBUSPCONTROLLER_BUILD_SHARED)
-#    if defined(LIBUSPCONTROLLER_EXPORTS)
+#  if defined(LIBUSPMTP_BUILD_SHARED)
+#    if defined(LIBUSPMTP_EXPORTS)
 #      define LIBUSP_API __declspec(dllexport)
 #    else
 #      define LIBUSP_API __declspec(dllimport)
@@ -586,4 +586,4 @@ int usp_controller_last_error(
 } /* extern "C" */
 #endif
 
-#endif /* LIBUSP_CONTROLLER_H */
+#endif /* LIBUSPMTP_H */

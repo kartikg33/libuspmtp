@@ -15,14 +15,14 @@ set(LIBUSPMTP_SOURCES
     src/usp_proto.cpp
     src/transport.cpp
     src/client.cpp
-    src/libuspcontroller.cpp
+    src/libuspmtp.cpp
 )
 
 # ── Library target ─────────────────────────────────────────────────────────
 if(LIBUSPMTP_BUILD_SHARED)
     add_library(libuspmtp SHARED ${LIBUSPMTP_SOURCES})
     target_compile_definitions(libuspmtp
-        PRIVATE  LIBUSPCONTROLLER_BUILD_SHARED LIBUSPCONTROLLER_EXPORTS
+        PRIVATE  LIBUSPMTP_BUILD_SHARED LIBUSPMTP_EXPORTS
         PUBLIC   LIBUSPMTP_BUILD_SHARED)
 else()
     add_library(libuspmtp STATIC ${LIBUSPMTP_SOURCES})
@@ -92,7 +92,7 @@ install(TARGETS libuspmtp
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(FILES include/libuspcontroller.h
+install(FILES include/libuspmtp.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 

@@ -3,6 +3,7 @@ tmp/
 
 # C++ build directories
 build/
+build_shared/
 cmake-build-*/
 out/
 bin/

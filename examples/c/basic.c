@@ -19,7 +19,7 @@
 /*
  * examples/c/basic.c
  *
- * Minimal C example demonstrating the libuspcontroller C API.
+ * Minimal C example demonstrating the libuspmtp C API.
  *
  * Usage:
  *   ./example_c [socket_path] [app_endpoint_id] [agent_endpoint_id]
@@ -30,7 +30,7 @@
  *   agent_endpoint_id = proto::api-gateway
  */
 
-#include "libuspcontroller.h"
+#include "libuspmtp.h"
 
 #include <stdio.h>
 #include <stdlib.h>

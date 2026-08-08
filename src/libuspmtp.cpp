@@ -17,7 +17,7 @@
  */
 
 /*
- * libuspcontroller.cpp
+ * libuspmtp.cpp
  *
  * C FFI layer — wraps UspController in a C-compatible opaque handle.
  *
@@ -36,7 +36,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "libuspcontroller.h"
+#include "libuspmtp.h"
 
 /* ── Handle type ─────────────────────────────────────────────────────────── */
 
