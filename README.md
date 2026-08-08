@@ -843,7 +843,7 @@ Always update to a specific upstream release tag rather than pulling from
    ```sh
    git checkout -b usp-spec-tmp <tag>
    git subtree split --prefix=specification/mtp -b usp-mtp-split
-   git checkout copilot/add-usp-mtp-specification-as-subtree  # or your working branch
+   git checkout <your-working-branch>
    ```
 
 4. Merge the new split branch into the subtree prefix:
