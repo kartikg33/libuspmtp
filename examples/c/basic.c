@@ -21,8 +21,12 @@
  *
  * Minimal C example demonstrating the libuspmtp C API.
  *
- * Usage:
- *   ./example_c [socket_path] [app_endpoint_id] [agent_endpoint_id]
+ * Configuration (environment variables take precedence over argv):
+ *   USP_SOCKET_PATH      – path to the OB-USPA UNIX domain socket
+ *   USP_APP_ENDPOINT_ID  – this application's USP endpoint ID (from_id)
+ *   USP_AGENT_ENDPOINT_ID– the USP agent's endpoint ID (to_id)
+ *
+ * Fallback order: env var → argv[N] → built-in default.
  *
  * Defaults:
  *   socket_path       = /var/run/usp/broker_agent_path
@@ -36,10 +40,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Return env var if set and non-empty, otherwise fallback. */
+static const char* env_or(const char* var, const char* fallback) {
+    const char* v = getenv(var);
+    return (v && v[0]) ? v : fallback;
+}
+
 int main(int argc, char** argv) {
-    const char* socket_path       = (argc > 1) ? argv[1] : "/var/run/usp/broker_agent_path";
-    const char* app_endpoint_id   = (argc > 2) ? argv[2] : "proto::myapp";
-    const char* agent_endpoint_id = (argc > 3) ? argv[3] : "proto::api-gateway";
+    const char* arg_socket = (argc > 1) ? argv[1] : "/var/run/usp/broker_agent_path";
+    const char* arg_app    = (argc > 2) ? argv[2] : "proto::myapp";
+    const char* arg_agent  = (argc > 3) ? argv[3] : "proto::api-gateway";
+
+    const char* socket_path       = env_or("USP_SOCKET_PATH",       arg_socket);
+    const char* app_endpoint_id   = env_or("USP_APP_ENDPOINT_ID",   arg_app);
+    const char* agent_endpoint_id = env_or("USP_AGENT_ENDPOINT_ID", arg_agent);
 
     printf("USP Controller C example\n");
     printf("  socket : %s\n", socket_path);

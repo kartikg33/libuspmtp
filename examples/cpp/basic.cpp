@@ -21,20 +21,34 @@
  *
  * Minimal C++ example demonstrating the UspController C++ API directly.
  *
- * Usage:
- *   ./example_cpp [socket_path] [app_endpoint_id] [agent_endpoint_id]
+ * Configuration (environment variables take precedence over argv):
+ *   USP_SOCKET_PATH       – path to the OB-USPA UNIX domain socket
+ *   USP_APP_ENDPOINT_ID   – this application's USP endpoint ID (from_id)
+ *   USP_AGENT_ENDPOINT_ID – the USP agent's endpoint ID (to_id)
+ *
+ * Fallback order: env var → argv[N] → built-in default.
  */
 
 #include "client.hpp"
 
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <variant>
 
+/* Return env var if set and non-empty, otherwise fallback. */
+static std::string env_or(const char* var, std::string fallback) {
+    const char* v = std::getenv(var);
+    return (v && v[0]) ? std::string(v) : std::move(fallback);
+}
+
 int main(int argc, char** argv) {
-    std::string socket_path       = (argc > 1) ? argv[1] : "/var/run/usp/broker_agent_path";
-    std::string app_endpoint_id   = (argc > 2) ? argv[2] : "proto::myapp";
-    std::string agent_endpoint_id = (argc > 3) ? argv[3] : "proto::api-gateway";
+    std::string socket_path       = env_or("USP_SOCKET_PATH",
+        (argc > 1) ? argv[1] : "/var/run/usp/broker_agent_path");
+    std::string app_endpoint_id   = env_or("USP_APP_ENDPOINT_ID",
+        (argc > 2) ? argv[2] : "proto::myapp");
+    std::string agent_endpoint_id = env_or("USP_AGENT_ENDPOINT_ID",
+        (argc > 3) ? argv[3] : "proto::api-gateway");
 
     std::cout << "USP Controller C++ example\n"
               << "  socket : " << socket_path       << "\n"
