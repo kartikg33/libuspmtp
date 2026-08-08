@@ -1,0 +1,36 @@
+name: clang-tidy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  clang-tidy:
+    name: clang-tidy static analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential clang clang-tidy
+
+      - name: Configure with compile commands
+        run: |
+          cmake -B build \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=clang \
+            -DLIBUSPMTP_BUILD_TESTS=ON \
+            -DLIBUSPMTP_BUILD_EXAMPLES=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run clang-tidy
+        run: |
+          clang-tidy \
+            -p build \
+            --warnings-as-errors='*' \
+            $(find src -name '*.cpp')
