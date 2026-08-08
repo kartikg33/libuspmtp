@@ -799,6 +799,72 @@ The document defines requirements for:
 
 ---
 
+# 📄 USP MTP Specification Subtree
+
+The `specification/mtp` directory contains the USP MTP specification sourced
+from the [BroadbandForum/usp](https://github.com/BroadbandForum/usp) repository
+via `git subtree`. The contents correspond to the
+[`specification/mtp`](https://github.com/BroadbandForum/usp/tree/master/specification/mtp)
+directory in that repository.
+
+The subtree is read-only in this repository — upstream contributions are not
+expected.
+
+## One-time setup
+
+Add the upstream remote once per local clone:
+
+```sh
+git remote add usp-spec https://github.com/BroadbandForum/usp.git
+git fetch usp-spec --tags
+```
+
+## Updating to a new upstream tag
+
+Always update to a specific upstream release tag rather than pulling from
+`master` directly. This makes the update reproducible and auditable.
+
+1. Fetch the latest tags from the upstream remote:
+
+   ```sh
+   git fetch usp-spec --tags
+   ```
+
+2. List available tags to choose a target version:
+
+   ```sh
+   git tag | sort -V
+   ```
+
+3. Create a local split branch that contains only the `specification/mtp`
+   subtree history at the chosen tag (replace `<tag>` with the desired version,
+   e.g. `v1.5.0`):
+
+   ```sh
+   git checkout -b usp-spec-tmp <tag>
+   git subtree split --prefix=specification/mtp -b usp-mtp-split
+   git checkout copilot/add-usp-mtp-specification-as-subtree  # or your working branch
+   ```
+
+4. Merge the new split branch into the subtree prefix:
+
+   ```sh
+   git subtree merge --prefix=specification/mtp usp-mtp-split --squash
+   ```
+
+5. Clean up the temporary branches:
+
+   ```sh
+   git branch -D usp-spec-tmp usp-mtp-split
+   ```
+
+6. Commit and push the result.
+
+The squash merge records a single commit in this repository's history for each
+upstream update, keeping the log readable.
+
+---
+
 # 🤝 Contributing
 
 Contributions are welcome.
