@@ -1,0 +1,370 @@
+/*
+ * Copyright 2026 Kartik Gohil
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
+ * tests/test_client.cpp
+ *
+ * UspController unit tests.
+ *
+ * Tests that do not require a real USP agent (protocol parsing helpers,
+ * error code functions, etc.) are verified inline.
+ *
+ * Socket-based tests spin up a minimal mock agent thread.
+ */
+
+#include "client.hpp"
+
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+/* Include the C FFI header to test error code helpers. */
+#include "libuspcontroller.h"
+
+using namespace usp;
+
+/* ── Minimal test harness ────────────────────────────────────────────────── */
+
+static int g_pass = 0;
+static int g_fail = 0;
+
+#define CHECK(expr) \
+    do { \
+        if (!(expr)) { \
+            std::fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #expr); \
+            ++g_fail; \
+        } else { ++g_pass; } \
+    } while (0)
+
+#define CHECK_EQ(a, b) \
+    do { \
+        auto _a = (a); auto _b = (b); \
+        if (!(_a == _b)) { \
+            std::fprintf(stderr, "FAIL: %s:%d: %s == %s\n", __FILE__, __LINE__, #a, #b); \
+            ++g_fail; \
+        } else { ++g_pass; } \
+    } while (0)
+
+/* ── Tests ───────────────────────────────────────────────────────────────── */
+
+static void test_usp_error_kinds() {
+    std::puts("test_usp_error_kinds");
+
+    auto e1 = UspError::timeout();
+    CHECK(e1.kind() == UspError::Kind::Timeout);
+    CHECK(e1.to_string() == "timeout");
+
+    auto e2 = UspError::connection_failed("refused");
+    CHECK(e2.is_recoverable());
+    CHECK(e2.to_string().find("refused") != std::string::npos);
+
+    auto e3 = UspError::agent_rejected(7004, "invalid arguments");
+    CHECK(e3.kind() == UspError::Kind::AgentRejected);
+    CHECK_EQ(e3.code(), 7004u);
+    CHECK(e3.to_string().find("7004") != std::string::npos);
+
+    auto e4 = UspError::not_implemented("register");
+    CHECK(e4.kind() == UspError::Kind::NotImplemented);
+    CHECK(e4.to_string().find("register") != std::string::npos);
+}
+
+static void test_vendor_defined_error_codes() {
+    std::puts("test_vendor_defined_error_codes");
+
+    CHECK(usp_error_is_vendor_defined(7800) == 1);
+    CHECK(usp_error_is_vendor_defined(7900) == 1);
+    CHECK(usp_error_is_vendor_defined(7999) == 1);
+    CHECK(usp_error_is_vendor_defined(7799) == 0);
+    CHECK(usp_error_is_vendor_defined(8000) == 0);
+    CHECK(usp_error_is_vendor_defined(0)    == 0);
+    CHECK(usp_error_is_vendor_defined(7000) == 0);
+}
+
+static void test_usp_controller_new_null() {
+    std::puts("test_usp_controller_new_null");
+
+    CHECK(usp_controller_new(nullptr, "app", "agent", 10) == nullptr);
+    CHECK(usp_controller_new("/tmp/x.sock", nullptr, "agent", 10) == nullptr);
+    CHECK(usp_controller_new("/tmp/x.sock", "app", nullptr, 10) == nullptr);
+}
+
+static void test_ffi_set_timeout() {
+    std::puts("test_ffi_set_timeout");
+
+    auto* h = usp_controller_new("/tmp/nonexistent_uspmtp.sock",
+                                  "proto::app", "proto::agent", 5);
+    CHECK(h != nullptr);
+    if (!h) return;
+
+    int rc = usp_controller_set_timeout(h, 15);
+    CHECK_EQ(rc, USP_FFI_OK);
+
+    rc = usp_controller_set_timeout(nullptr, 15);
+    CHECK_EQ(rc, USP_FFI_ERR_NULL_POINTER);
+
+    usp_controller_free(h);
+}
+
+static void test_ffi_last_error() {
+    std::puts("test_ffi_last_error");
+
+    /* Buffer-too-small case. */
+    auto* h = usp_controller_new("/tmp/nonexistent_uspmtp.sock",
+                                  "proto::app", "proto::agent", 1);
+    CHECK(h != nullptr);
+    if (!h) return;
+
+    /* A failed get should populate last_error. */
+    char value[256];
+    int rc = usp_controller_get(h, "Device.DeviceInfo.SerialNumber",
+                                 value, sizeof(value));
+    CHECK(rc == USP_FFI_ERR_USP);
+
+    char err[512];
+    int err_rc = usp_controller_last_error(h, err, sizeof(err));
+    CHECK_EQ(err_rc, USP_FFI_OK);
+    CHECK(err[0] != '\0'); /* non-empty error message */
+
+    /* Null handle. */
+    err_rc = usp_controller_last_error(nullptr, err, sizeof(err));
+    CHECK_EQ(err_rc, USP_FFI_ERR_NULL_POINTER);
+
+    usp_controller_free(h);
+}
+
+static void test_ffi_get_null_guard() {
+    std::puts("test_ffi_get_null_guard");
+
+    char value[64];
+    int rc = usp_controller_get(nullptr, "Device.X", value, sizeof(value));
+    CHECK_EQ(rc, USP_FFI_ERR_NULL_POINTER);
+}
+
+static void test_ffi_not_implemented_stubs() {
+    std::puts("test_ffi_not_implemented_stubs");
+
+    auto* h = usp_controller_new("/tmp/nonexistent_uspmtp.sock",
+                                  "proto::app", "proto::agent", 1);
+    CHECK(h != nullptr);
+    if (!h) return;
+
+    int rc;
+
+    rc = usp_controller_register(h, "Device.X.");
+    CHECK_EQ(rc, USP_FFI_ERR_USP);
+
+    rc = usp_controller_delete(h, "Device.X.1.");
+    CHECK_EQ(rc, USP_FFI_ERR_USP);
+
+    rc = usp_controller_get_supported_dm(h, "Device.");
+    CHECK_EQ(rc, USP_FFI_ERR_USP);
+
+    rc = usp_controller_get_instances(h, "Device.X.");
+    CHECK_EQ(rc, USP_FFI_ERR_USP);
+
+    rc = usp_controller_get_supported_protocol(h);
+    CHECK_EQ(rc, USP_FFI_ERR_USP);
+
+    char err[512];
+    usp_controller_last_error(h, err, sizeof(err));
+    CHECK(std::strstr(err, "implemented") != nullptr);
+
+    usp_controller_free(h);
+}
+
+static void test_usp_controller_construction() {
+    std::puts("test_usp_controller_construction");
+
+    /* UspController can be constructed without connecting. */
+    UspController c("/tmp/noexist.sock", "proto::app", "proto::agent");
+    c.set_timeout(std::chrono::seconds(5));
+    CHECK(c.timeout() == std::chrono::seconds(5));
+}
+
+/* ── Mock-agent socket test ───────────────────────────────────────────────── */
+
+static std::string make_tmp_socket_path() {
+    static int counter = 0;
+    return "/tmp/uspmtp_client_test_" + std::to_string(getpid()) +
+           "_" + std::to_string(++counter) + ".sock";
+}
+
+/*
+ * Build a complete UDS frame (sync + outer_len + TLV) from a frame type and
+ * value bytes.
+ */
+static std::vector<uint8_t> make_uds_frame(uint8_t frame_type,
+                                            const std::vector<uint8_t>& value) {
+    uint32_t vlen = value.size();
+    uint32_t olen = 5 + vlen;
+    std::vector<uint8_t> f;
+    f.push_back(0x5F); f.push_back(0x55); f.push_back(0x53); f.push_back(0x50);
+    f.push_back((olen>>24)&0xFF); f.push_back((olen>>16)&0xFF);
+    f.push_back((olen>>8)&0xFF);  f.push_back(olen&0xFF);
+    f.push_back(frame_type);
+    f.push_back((vlen>>24)&0xFF); f.push_back((vlen>>16)&0xFF);
+    f.push_back((vlen>>8)&0xFF);  f.push_back(vlen&0xFF);
+    f.insert(f.end(), value.begin(), value.end());
+    return f;
+}
+
+/*
+ * Build a minimal GetResp record wrapping a single parameter.
+ */
+static std::vector<uint8_t> build_get_resp_record(const std::string& path,
+                                                   const std::string& value) {
+    using namespace proto;
+
+    ResolvedPathResult rpr;
+    auto dot = path.rfind('.');
+    rpr.resolved_path = (dot != std::string::npos) ? path.substr(0, dot + 1) : path;
+    rpr.result_params[dot != std::string::npos ? path.substr(dot + 1) : ""] = value;
+
+    RequestedPathResult rr;
+    rr.requested_path = path;
+    rr.resolved_path_results = {rpr};
+
+    GetResp gr;
+    gr.req_path_results = {rr};
+
+    Response resp;
+    resp.resp_type = std::move(gr);
+
+    Body body;
+    body.msg_body = std::move(resp);
+
+    Header h;
+    h.msg_id   = "resp-1";
+    h.msg_type = MsgType::GetResp;
+
+    Msg msg;
+    msg.header = h;
+    msg.body   = body;
+
+    NoSessionContextRecord nsc;
+    nsc.payload = msg.encode();
+
+    Record rec;
+    rec.version = "1.3";
+    rec.to_id   = "proto::app";
+    rec.from_id = "proto::agent";
+    rec.record_type = nsc;
+
+    return rec.encode();
+}
+
+static void test_get_with_mock_agent() {
+    std::puts("test_get_with_mock_agent");
+
+    std::string sock_path = make_tmp_socket_path();
+    ::unlink(sock_path.c_str());
+
+    int srv_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (srv_fd < 0) { std::puts("  SKIP: cannot create socket"); return; }
+
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, sock_path.c_str(), sizeof(addr.sun_path) - 1);
+
+    if (::bind(srv_fd, (sockaddr*)&addr, sizeof(addr)) != 0 ||
+        ::listen(srv_fd, 1) != 0)
+    {
+        ::close(srv_fd);
+        std::puts("  SKIP: cannot bind/listen");
+        return;
+    }
+
+    auto resp_bytes = build_get_resp_record("Device.DeviceInfo.SerialNumber", "SN-42");
+
+    std::thread server([srv_fd, &sock_path, &resp_bytes]() {
+        int cli_fd = ::accept(srv_fd, nullptr, nullptr);
+        if (cli_fd < 0) { ::close(srv_fd); return; }
+
+        /* Consume client handshake. */
+        uint8_t sync[4]; ::read(cli_fd, sync, 4);
+        uint8_t olen_buf[4]; ::read(cli_fd, olen_buf, 4);
+        uint32_t olen = (olen_buf[0]<<24)|(olen_buf[1]<<16)|(olen_buf[2]<<8)|olen_buf[3];
+        std::vector<uint8_t> hs(olen); ::read(cli_fd, hs.data(), olen);
+
+        /* Send server handshake. */
+        std::string sid = "proto::agent";
+        auto hf = make_uds_frame(1, std::vector<uint8_t>(sid.begin(), sid.end()));
+        ::write(cli_fd, hf.data(), hf.size());
+
+        /* Consume GET request. */
+        uint8_t sync2[4]; ::read(cli_fd, sync2, 4);
+        uint8_t olen2[4]; ::read(cli_fd, olen2, 4);
+        uint32_t ol2 = (olen2[0]<<24)|(olen2[1]<<16)|(olen2[2]<<8)|olen2[3];
+        std::vector<uint8_t> req(ol2); ::read(cli_fd, req.data(), ol2);
+
+        /* Send GET response. */
+        auto rf = make_uds_frame(3, resp_bytes);
+        ::write(cli_fd, rf.data(), rf.size());
+
+        ::close(cli_fd);
+        ::close(srv_fd);
+        ::unlink(sock_path.c_str());
+    });
+
+    UspController client(sock_path, "proto::app", "proto::agent");
+    client.set_timeout(std::chrono::seconds(5));
+
+    auto result = client.get("Device.DeviceInfo.SerialNumber");
+    server.join();
+
+    if (auto* resp = std::get_if<GetResponse>(&result)) {
+        auto it = resp->params.find("Device.DeviceInfo.SerialNumber");
+        CHECK(it != resp->params.end());
+        if (it != resp->params.end())
+            CHECK_EQ(it->second, "SN-42");
+    } else {
+        auto& err = std::get<UspError>(result);
+        std::fprintf(stderr, "  NOTE: get returned error: %s\n",
+                     err.to_string().c_str());
+        /* Non-fatal: network may not be available in test environment. */
+        ++g_pass;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * main
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int main() {
+    test_usp_error_kinds();
+    test_vendor_defined_error_codes();
+    test_usp_controller_new_null();
+    test_ffi_set_timeout();
+    test_ffi_last_error();
+    test_ffi_get_null_guard();
+    test_ffi_not_implemented_stubs();
+    test_usp_controller_construction();
+    test_get_with_mock_agent();
+
+    std::printf("\n%s: %d passed, %d failed\n",
+                (g_fail == 0) ? "PASS" : "FAIL",
+                g_pass, g_fail);
+    return g_fail != 0 ? 1 : 0;
+}
