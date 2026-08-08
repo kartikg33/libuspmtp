@@ -799,13 +799,17 @@ The document defines requirements for:
 
 ---
 
-# 📄 USP MTP Specification Subtree
+# 📄 USP Specification Subtree
 
-The `specification/mtp` directory contains the USP MTP specification sourced
-from the [BroadbandForum/usp](https://github.com/BroadbandForum/usp) repository
-via `git subtree`. The contents correspond to the
-[`specification/mtp`](https://github.com/BroadbandForum/usp/tree/master/specification/mtp)
-directory in that repository.
+The `specification/` directory contains the full USP specification sourced from
+the [BroadbandForum/usp](https://github.com/BroadbandForum/usp) repository via
+`git subtree`. It maps directly to the
+[`specification/`](https://github.com/BroadbandForum/usp/tree/master/specification)
+directory in that repository, and includes:
+
+- Protocol Buffer definitions (`usp-msg-*.proto`, `usp-record-*.proto`)
+- MTP specifications (`specification/mtp/` — CoAP, MQTT, STOMP, WebSocket, Unix Domain Socket)
+- Architecture, encoding, security, and other specification chapters
 
 The subtree is read-only in this repository — upstream contributions are not
 expected.
@@ -836,26 +840,26 @@ Always update to a specific upstream release tag rather than pulling from
    git tag | sort -V
    ```
 
-3. Create a local split branch that contains only the `specification/mtp`
+3. Create a local split branch that contains only the `specification/`
    subtree history at the chosen tag (replace `<tag>` with the desired version,
    e.g. `v1.5.0`):
 
    ```sh
    git checkout -b usp-spec-tmp <tag>
-   git subtree split --prefix=specification/mtp -b usp-mtp-split
+   git subtree split --prefix=specification -b usp-spec-split
    git checkout <your-working-branch>
    ```
 
 4. Merge the new split branch into the subtree prefix:
 
    ```sh
-   git subtree merge --prefix=specification/mtp usp-mtp-split --squash
+   git subtree merge --prefix=specification usp-spec-split --squash
    ```
 
 5. Clean up the temporary branches:
 
    ```sh
-   git branch -D usp-spec-tmp usp-mtp-split
+   git branch -D usp-spec-tmp usp-spec-split
    ```
 
 6. Commit and push the result.
