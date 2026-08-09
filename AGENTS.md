@@ -2167,3 +2167,43 @@ When choosing between two otherwise valid implementations, prefer the one that m
 The goal is not merely to produce code that works.
 
 The goal is to maintain a **safe, predictable, portable, ABI-stable C++20 library that remains understandable and maintainable over its entire lifetime**.
+---
+
+# 98. Repository Submodules
+
+This repository includes a git submodule providing the USP (TR-369) specification:
+
+| Submodule | Path | Remote | Tag |
+|---|---|---|---|
+| `usp-specification` | `specification/` | `https://github.com/BroadbandForum/usp.git` | `v1.5.0` |
+
+The submodule is always pinned to a **tagged release**. It must never track `master` or a bare commit hash.
+
+## Fetching submodules when cloning
+
+Clone with submodules in one command:
+
+```bash
+git clone --recurse-submodules https://github.com/kartikg33/libuspmtp.git
+```
+
+Or, after a plain clone, initialise and fetch the submodule:
+
+```bash
+git submodule update --init --recursive
+```
+
+## Updating the submodule
+
+When updating the pinned specification release, always target a new **tagged release**:
+
+```bash
+cd specification
+git fetch --tags
+git checkout v<NEW_TAG>
+cd ..
+git add specification
+git commit -m "chore: update USP specification submodule to v<NEW_TAG>"
+```
+
+Never point the submodule at `master`, `HEAD`, or an untagged commit.

@@ -316,6 +316,27 @@ int main()
 
 ---
 
+## Cloning
+
+This repository uses a git submodule to include the [USP (TR-369) specification](https://github.com/BroadbandForum/usp) at tag `v1.5.0` under the `specification/` directory.
+
+### Clone with submodules (recommended)
+
+```bash
+git clone --recurse-submodules https://github.com/kartikg33/libuspmtp.git
+```
+
+### If you already cloned without submodules
+
+```bash
+git submodule update --init --recursive
+```
+
+> The `specification/` directory contains the Broadband Forum USP specification at tag `v1.5.0`.
+> The submodule always tracks a tagged release, never `master` or a bare commit hash.
+
+---
+
 ## Configure
 
 ```bash

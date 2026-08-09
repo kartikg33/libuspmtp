@@ -1,0 +1,3 @@
+[submodule "usp-specification"]
+	path = specification
+	url = https://github.com/BroadbandForum/usp.git
