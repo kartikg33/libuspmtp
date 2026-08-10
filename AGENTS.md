@@ -35,6 +35,29 @@ When these goals conflict, correctness and safety take precedence over convenien
 
 ---
 
+# Specification Source of Truth (MTP/USP)
+
+This repository includes vendored MTP/USP reference material under:
+
+- `proto/`
+- `specification/`
+
+These directories are the authoritative upstream specification inputs for this project.
+
+Before making implementation changes, agents must read:
+
+- `proto/*.proto`
+- relevant files under `specification/`
+
+Mandatory rules:
+
+- Never modify files under `proto/` or `specification/` as part of normal implementation work.
+- Always treat `proto/` and `specification/` as source-of-truth references for protocol behavior.
+- Implementations in this repository must exactly and correctly follow those specifications.
+- This codebase is a clean-room C++20 implementation and must not drift from the vendored spec/proto definitions.
+
+---
+
 # 1. General Engineering Principles
 
 The implementation must follow these principles:
