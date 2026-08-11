@@ -5,6 +5,18 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# ── Protocol Buffers ───────────────────────────────────────────────────────
+find_package(Protobuf REQUIRED)
+
+set(LIBUSPMTP_PROTO_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/proto/usp-msg-1-5.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/proto/usp-record-1-5.proto
+)
+
+protobuf_generate_cpp(LIBUSPMTP_PROTO_SRCS LIBUSPMTP_PROTO_HDRS
+    ${LIBUSPMTP_PROTO_FILES}
+)
+
 # ── Options ────────────────────────────────────────────────────────────────
 option(LIBUSPMTP_BUILD_SHARED   "Build shared library (default: static)" OFF)
 option(LIBUSPMTP_BUILD_TESTS    "Build test executables" OFF)
@@ -16,6 +28,8 @@ set(LIBUSPMTP_SOURCES
     src/transport.cpp
     src/client.cpp
     src/libuspmtp.cpp
+    ${LIBUSPMTP_PROTO_SRCS}
+    ${LIBUSPMTP_PROTO_HDRS}
 )
 
 # ── Library target ─────────────────────────────────────────────────────────
@@ -43,11 +57,12 @@ target_include_directories(libuspmtp
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 # Thread support (pthreads on Linux/macOS)
 find_package(Threads REQUIRED)
-target_link_libraries(libuspmtp PRIVATE Threads::Threads)
+target_link_libraries(libuspmtp PRIVATE Threads::Threads protobuf::libprotobuf)
 
 # Compiler warnings
 target_compile_options(libuspmtp PRIVATE

@@ -42,8 +42,11 @@
 
 #include "usp_proto.hpp"
 
+#include <array>
 #include <chrono>
+#include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace usp {

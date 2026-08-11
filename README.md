@@ -304,6 +304,7 @@ int main()
 
 - C++20 compiler
 - CMake
+- Official Protocol Buffers compiler and C++ runtime
 - A supported platform/compiler combination
 
 ### Supported compilers
