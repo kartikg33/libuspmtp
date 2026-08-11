@@ -203,7 +203,7 @@ static void test_handshake_and_send_recv() {
 
     /* Encode a simple USP Record to echo back. */
     proto::Record test_rec;
-    test_rec.version = "1.3";
+    test_rec.version = "1.5";
     test_rec.to_id   = "proto::server";
     test_rec.from_id = "proto::client";
     proto::NoSessionContextRecord nsc;

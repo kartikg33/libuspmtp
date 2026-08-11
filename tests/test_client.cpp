@@ -287,7 +287,7 @@ static std::vector<uint8_t> build_get_resp_record(const std::string& path,
     nsc.payload = msg.encode();
 
     Record rec;
-    rec.version = "1.3";
+    rec.version = "1.5";
     rec.to_id   = "proto::app";
     rec.from_id = "proto::agent";
     rec.record_type = nsc;

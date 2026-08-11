@@ -98,7 +98,7 @@ static proto::Record build_record_fn(const std::string& from_id,
     nsc.payload = msg.encode();
 
     proto::Record rec;
-    rec.version         = "1.3";
+    rec.version         = "1.5";
     rec.to_id           = to_id;
     rec.from_id         = from_id;
     rec.payload_security = 0; /* Plaintext */
