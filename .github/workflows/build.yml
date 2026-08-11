@@ -1,0 +1,84 @@
+name: Build and Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-static:
+    name: Static library – build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+
+      - name: Configure (static)
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DLIBUSPMTP_BUILD_TESTS=ON \
+            -DLIBUSPMTP_BUILD_EXAMPLES=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  build-shared:
+    name: Shared library – build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+
+      - name: Configure (shared)
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DLIBUSPMTP_BUILD_SHARED=ON \
+            -DLIBUSPMTP_BUILD_TESTS=ON \
+            -DLIBUSPMTP_BUILD_EXAMPLES=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  sanitizers:
+    name: ASan + UBSan build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential clang
+
+      - name: Configure with sanitizers
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=clang \
+            -DLIBUSPMTP_BUILD_TESTS=ON \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: halt_on_error=1:detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build --output-on-failure
