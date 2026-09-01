@@ -18,9 +18,8 @@ protobuf_generate_cpp(LIBUSPMTP_PROTO_SRCS LIBUSPMTP_PROTO_HDRS
 )
 
 # ── Options ────────────────────────────────────────────────────────────────
-option(LIBUSPMTP_BUILD_SHARED   "Build shared library (default: static)" OFF)
-option(LIBUSPMTP_BUILD_TESTS    "Build test executables" OFF)
-option(LIBUSPMTP_BUILD_EXAMPLES "Build example executables" OFF)
+option(LIBUSPMTP_BUILD_SHARED "Build shared library (default: static)" OFF)
+option(LIBUSPMTP_BUILD_TESTS  "Build test executables" OFF)
 
 # ── Source files ───────────────────────────────────────────────────────────
 set(LIBUSPMTP_SOURCES
@@ -82,19 +81,6 @@ if(LIBUSPMTP_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/include)
         add_test(NAME ${test_name} COMMAND ${test_name})
     endforeach()
-endif()
-
-# ── Examples ───────────────────────────────────────────────────────────────
-if(LIBUSPMTP_BUILD_EXAMPLES)
-    add_executable(example_c examples/c/basic.c)
-    target_link_libraries(example_c PRIVATE libuspmtp::libuspmtp)
-    target_include_directories(example_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-    add_executable(example_cpp examples/cpp/basic.cpp)
-    target_link_libraries(example_cpp PRIVATE libuspmtp::libuspmtp Threads::Threads)
-    target_include_directories(example_cpp PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
 # ── Install rules ──────────────────────────────────────────────────────────

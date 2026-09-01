@@ -40,17 +40,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
-# Copy only what is needed to build the library and the C++ example.
-COPY CMakeLists.txt ./
-COPY cmake/           cmake/
-COPY include/         include/
-COPY proto/           proto/
-COPY src/             src/
-COPY examples/cpp/    examples/cpp/
+# Copy the library (needed as a dependency of the example build) and the
+# C++ example itself.
+COPY CMakeLists.txt        ./
+COPY cmake/                cmake/
+COPY include/              include/
+COPY proto/                proto/
+COPY src/                  src/
+COPY examples/cpp/         examples/cpp/
 
-RUN cmake -S . -B /build \
+# Build the C++ example as its own application. The example's CMakeLists pulls
+# the library in via add_subdirectory and links the binary against it
+# (statically), so the top-level project only builds the library.
+RUN cmake -S examples/cpp -B /build \
         -DCMAKE_BUILD_TYPE=Release \
-        -DLIBUSPMTP_BUILD_EXAMPLES=ON \
+        -DLIBUSPMTP_SOURCE_DIR=/src \
         -DLIBUSPMTP_BUILD_TESTS=OFF \
     && cmake --build /build --parallel "$(nproc)"
 
