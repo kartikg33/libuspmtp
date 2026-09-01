@@ -63,6 +63,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libstdc++6 \
+        libprotobuf32 \
     && rm -rf /var/lib/apt/lists/*
 
 # Default socket path; override with -e USP_SOCKET_PATH=...

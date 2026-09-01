@@ -61,6 +61,13 @@ RUN cmake -S examples/c -B /build \
 # ── Stage 2: runtime ───────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
+# The static libuspmtp.a pulls in the C++ runtime and the protobuf shared
+# library at link time, so the binary needs them present at runtime.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libstdc++6 \
+        libprotobuf32 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Default socket path; override with -e USP_SOCKET_PATH=...
 ENV USP_SOCKET_PATH=/var/run/usp/broker_agent_path
 ENV USP_APP_ENDPOINT_ID=proto::myapp
