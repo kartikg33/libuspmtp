@@ -1,0 +1,70 @@
+#
+# test/compose.yml
+#
+# Proves that the libuspmtp C example and C++ example each build and run
+# (independently of one another) against the same OB-USPA USP agent.
+#
+#   * The C and C++ services build their own image from this repo with only
+#     that language's example — no shared build artifacts between the two,
+#     so each service is truly independent.
+#   * Each example is a standalone app whose CMakeLists pulls the library in
+#     via add_subdirectory and links its single binary against a statically
+#     built libuspmtp.
+#   * obuspa provides a shared UDS MTP socket for both examples to talk to.
+#
+# Usage (from this repo's root):
+#   docker compose -f test/compose.yml up --build
+#
+# Expected output:
+#   libuspmtp-c-example   GETs Device.DeviceInfo. over the UDS MTP socket.
+#   libuspmtp-cpp-example GETs Device.DeviceInfo. over the UDS MTP socket.
+#
+# The two example services reference this repo as their build context, so
+# they work even when this compose file is just used as a reference for
+# building only the C++ example inside a different repository.
+#
+
+services:
+
+  obuspa:
+    # Pre-built OCI image that runs the OB-USPA daemon with UDS MTP enabled.
+    image: ghcr.io/kartikg33/usp-agent-app:0.0.6
+    volumes:
+      # Shared Unix Domain Socket directory (UDS MTP)
+      - usp_socket:/var/run/obuspa
+    environment:
+      INTERFACE: eth0
+    restart: unless-stopped
+
+  libuspmtp-c-example:
+    # Builds libuspmtp (static) and the C example, then runs it.
+    build:
+      context: ..
+      dockerfile: examples/c/Dockerfile
+    volumes:
+      - usp_socket:/var/run/usp
+    environment:
+      USP_SOCKET_PATH: /var/run/usp/usp.sock
+      USP_APP_ENDPOINT_ID: proto::libuspmtp-c-example
+      USP_AGENT_ENDPOINT_ID: proto::api-gateway
+    depends_on:
+      - obuspa
+    restart: unless-stopped
+
+  libuspmtp-cpp-example:
+    # Builds libuspmtp (static) and the C++ example, then runs it.
+    build:
+      context: ..
+      dockerfile: examples/cpp/Dockerfile
+    volumes:
+      - usp_socket:/var/run/usp
+    environment:
+      USP_SOCKET_PATH: /var/run/usp/usp.sock
+      USP_APP_ENDPOINT_ID: proto::libuspmtp-cpp-example
+      USP_AGENT_ENDPOINT_ID: proto::api-gateway
+    depends_on:
+      - obuspa
+    restart: unless-stopped
+
+volumes:
+  usp_socket:
