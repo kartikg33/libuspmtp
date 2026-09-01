@@ -24,9 +24,11 @@
 
 #include "transport.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <span>
 #include <string>
 
 #include <fcntl.h>
@@ -39,6 +41,11 @@ namespace usp {
 
 /* ── helpers ───────────────────────────────────────────────────────────── */
 
+struct TlvView {
+    uint8_t type{0};
+    std::span<const uint8_t> value;
+};
+
 static TransportError make_io_error(const char* ctx) {
     char buf[256];
     std::snprintf(buf, sizeof(buf), "%s: %s", ctx, std::strerror(errno));
@@ -47,6 +54,42 @@ static TransportError make_io_error(const char* ctx) {
 
 static bool is_timeout_errno() {
     return errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT;
+}
+
+static std::variant<std::vector<TlvView>, TransportError>
+parse_tlvs(std::span<const uint8_t> payload) {
+    std::vector<TlvView> tlvs;
+    size_t pos = 0;
+
+    while (pos < payload.size()) {
+        if (payload.size() - pos < TLV_HEADER_SIZE) {
+            return TransportError::protocol("UDS frame contains a truncated TLV header");
+        }
+
+        const uint8_t type = payload[pos];
+        const uint32_t value_len =
+            (static_cast<uint32_t>(payload[pos + 1]) << 24) |
+            (static_cast<uint32_t>(payload[pos + 2]) << 16) |
+            (static_cast<uint32_t>(payload[pos + 3]) <<  8) |
+             static_cast<uint32_t>(payload[pos + 4]);
+
+        pos += TLV_HEADER_SIZE;
+        if (value_len > payload.size() - pos) {
+            return TransportError::protocol("TLV length exceeds remaining frame payload");
+        }
+
+        tlvs.push_back(TlvView{type, payload.subspan(pos, value_len)});
+        pos += value_len;
+    }
+
+    if (tlvs.empty()) {
+        return TransportError::protocol("UDS frame contains no TLVs");
+    }
+    return tlvs;
+}
+
+static std::string tlv_string(TlvView tlv) {
+    return std::string(reinterpret_cast<const char*>(tlv.value.data()), tlv.value.size());
 }
 
 /* ── Transport::connect ─────────────────────────────────────────────────── */
@@ -140,7 +183,7 @@ std::optional<TransportError> Transport::send(const proto::Record& record) {
     if (auto e = write_all(UDS_SYNC.data(), UDS_SYNC.size())) return e;
 
     /* Outer length (big-endian) */
-    uint8_t olen_buf[4] = {
+    const uint8_t olen_buf[4] = {
         static_cast<uint8_t>((outer_len >> 24) & 0xFFu),
         static_cast<uint8_t>((outer_len >> 16) & 0xFFu),
         static_cast<uint8_t>((outer_len >>  8) & 0xFFu),
@@ -153,7 +196,7 @@ std::optional<TransportError> Transport::send(const proto::Record& record) {
     if (auto e = write_all(&ftype, 1)) return e;
 
     /* TLV: value length (big-endian) */
-    uint8_t vlen_buf[4] = {
+    const uint8_t vlen_buf[4] = {
         static_cast<uint8_t>((tlv_value_len >> 24) & 0xFFu),
         static_cast<uint8_t>((tlv_value_len >> 16) & 0xFFu),
         static_cast<uint8_t>((tlv_value_len >>  8) & 0xFFu),
@@ -174,36 +217,32 @@ std::variant<proto::Record, TransportError> Transport::recv() {
         return *err;
 
     auto& tlv_payload = std::get<std::vector<uint8_t>>(frame);
-    if (tlv_payload.size() < TLV_HEADER_SIZE)
-        return TransportError::protocol("UDS frame TLV too short");
+    auto parsed = parse_tlvs(std::span<const uint8_t>(tlv_payload.data(), tlv_payload.size()));
+    if (auto* err = std::get_if<TransportError>(&parsed)) {
+        return *err;
+    }
 
-    uint8_t frame_type = tlv_payload[0];
-    uint32_t tlv_value_len =
-        (static_cast<uint32_t>(tlv_payload[1]) << 24) |
-        (static_cast<uint32_t>(tlv_payload[2]) << 16) |
-        (static_cast<uint32_t>(tlv_payload[3]) <<  8) |
-         static_cast<uint32_t>(tlv_payload[4]);
+    const auto& tlvs = std::get<std::vector<TlvView>>(parsed);
 
-    if (TLV_HEADER_SIZE + tlv_value_len > tlv_payload.size())
-        return TransportError::protocol("TLV length exceeds frame payload");
+    const auto err_it = std::find_if(tlvs.begin(), tlvs.end(),
+        [](const TlvView& tlv) { return tlv.type == FRAME_TYPE_ERROR; });
+    if (err_it != tlvs.end()) {
+        return TransportError::protocol("ob-uspa error frame: " + tlv_string(*err_it));
+    }
 
-    const uint8_t* value_ptr = tlv_payload.data() + TLV_HEADER_SIZE;
+    for (const auto& tlv : tlvs) {
+        if (tlv.type != FRAME_TYPE_USP_RECORD) {
+            continue;
+        }
 
-    switch (frame_type) {
-    case FRAME_TYPE_USP_RECORD: {
-        std::span<const uint8_t> payload_span(value_ptr, tlv_value_len);
-        auto rec = proto::Record::decode(payload_span);
-        if (!rec) return TransportError::protocol("failed to decode USP Record");
+        auto rec = proto::Record::decode(tlv.value);
+        if (!rec) {
+            return TransportError::protocol("failed to decode USP Record");
+        }
         return std::move(*rec);
     }
-    case FRAME_TYPE_ERROR: {
-        std::string msg(reinterpret_cast<const char*>(value_ptr), tlv_value_len);
-        return TransportError::protocol("ob-uspa error frame: " + msg);
-    }
-    default:
-        return TransportError::protocol(
-            "unexpected UDS frame type " + std::to_string(frame_type));
-    }
+
+    return TransportError::protocol("UDS frame did not contain a USP Record TLV");
 }
 
 /* ── Private helpers ────────────────────────────────────────────────────── */
@@ -215,7 +254,7 @@ std::optional<TransportError> Transport::send_handshake(const std::string& endpo
 
     if (auto e = write_all(UDS_SYNC.data(), UDS_SYNC.size())) return e;
 
-    uint8_t olen_buf[4] = {
+    const uint8_t olen_buf[4] = {
         static_cast<uint8_t>((outer_len >> 24) & 0xFFu),
         static_cast<uint8_t>((outer_len >> 16) & 0xFFu),
         static_cast<uint8_t>((outer_len >>  8) & 0xFFu),
@@ -226,7 +265,7 @@ std::optional<TransportError> Transport::send_handshake(const std::string& endpo
     uint8_t ftype = FRAME_TYPE_HANDSHAKE;
     if (auto e = write_all(&ftype, 1)) return e;
 
-    uint8_t vlen_buf[4] = {
+    const uint8_t vlen_buf[4] = {
         static_cast<uint8_t>((tlv_value_len >> 24) & 0xFFu),
         static_cast<uint8_t>((tlv_value_len >> 16) & 0xFFu),
         static_cast<uint8_t>((tlv_value_len >>  8) & 0xFFu),
@@ -246,27 +285,26 @@ std::variant<std::vector<uint8_t>, TransportError> Transport::recv_handshake() {
         return *err;
 
     auto& tlv = std::get<std::vector<uint8_t>>(frame);
-    if (tlv.size() < TLV_HEADER_SIZE)
-        return TransportError::protocol("handshake response frame too short");
+    auto parsed = parse_tlvs(std::span<const uint8_t>(tlv.data(), tlv.size()));
+    if (auto* err = std::get_if<TransportError>(&parsed)) {
+        return *err;
+    }
 
-    switch (tlv[0]) {
-    case FRAME_TYPE_HANDSHAKE:
-        return tlv;
-    case FRAME_TYPE_ERROR: {
-        uint32_t vlen =
-            (static_cast<uint32_t>(tlv[1]) << 24) |
-            (static_cast<uint32_t>(tlv[2]) << 16) |
-            (static_cast<uint32_t>(tlv[3]) <<  8) |
-             static_cast<uint32_t>(tlv[4]);
-        size_t end = std::min(TLV_HEADER_SIZE + vlen, tlv.size());
-        std::string msg(reinterpret_cast<const char*>(tlv.data() + TLV_HEADER_SIZE),
-                        end - TLV_HEADER_SIZE);
-        return TransportError::connection_failed("ob-uspa rejected handshake: " + msg);
+    const auto& items = std::get<std::vector<TlvView>>(parsed);
+
+    const auto err_it = std::find_if(items.begin(), items.end(),
+        [](const TlvView& item) { return item.type == FRAME_TYPE_ERROR; });
+    if (err_it != items.end()) {
+        return TransportError::connection_failed("ob-uspa rejected handshake: " + tlv_string(*err_it));
     }
-    default:
-        return TransportError::protocol(
-            "expected handshake, got frame type " + std::to_string(tlv[0]));
+
+    const auto hs_it = std::find_if(items.begin(), items.end(),
+        [](const TlvView& item) { return item.type == FRAME_TYPE_HANDSHAKE; });
+    if (hs_it != items.end()) {
+        return std::vector<uint8_t>(hs_it->value.begin(), hs_it->value.end());
     }
+
+    return TransportError::protocol("handshake response did not contain a Handshake TLV");
 }
 
 std::variant<std::vector<uint8_t>, TransportError> Transport::read_frame() {

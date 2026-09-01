@@ -75,7 +75,7 @@ handle_notification_record(Transport& transport,
                             const proto::Record& record,
                             const std::string& endpoint_id,
                             const std::string& agent_endpoint_id,
-                            std::vector<std::function<void()>>& callbacks);
+                            const std::vector<std::function<void()>>& callbacks);
 
 static std::variant<proto::Record, UspError>
 wait_for_non_notify(Transport& transport,
@@ -98,7 +98,7 @@ static proto::Record build_record_fn(const std::string& from_id,
     nsc.payload = msg.encode();
 
     proto::Record rec;
-    rec.version         = "1.3";
+    rec.version         = "1.5";
     rec.to_id           = to_id;
     rec.from_id         = from_id;
     rec.payload_security = 0; /* Plaintext */
@@ -144,12 +144,12 @@ handle_notification_record(Transport& transport,
                             const proto::Record& record,
                             const std::string& endpoint_id,
                             const std::string& agent_endpoint_id,
-                            std::vector<std::function<void()>>& callbacks)
+                            const std::vector<std::function<void()>>& callbacks)
 {
     auto notify_opt = extract_notify(record);
     if (!notify_opt) return std::nullopt; /* Not a notify – caller handles it */
 
-    auto& notify = *notify_opt;
+    const auto& notify = *notify_opt;
 
     if (notify.send_resp) {
         proto::NotifyResp nr;
@@ -168,7 +168,7 @@ handle_notification_record(Transport& transport,
     }
 
     /* Fire all notification callbacks. */
-    for (auto& cb : callbacks) {
+    for (const auto& cb : callbacks) {
         if (cb) cb();
     }
 
