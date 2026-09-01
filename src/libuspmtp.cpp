@@ -137,7 +137,7 @@ static std::string format_get_response(const usp::GetResponse& resp) {
     for (auto& [path, value] : resp.params) {
         out += "PARAM\t" + escape_field(path) + "\t" + escape_field(value) + "\n";
     }
-    for (auto& e : resp.errors) {
+    for (const auto& e : resp.errors) {
         out += "ERROR\t" + escape_field(e.path) + "\t" +
                std::to_string(e.err_code) + "\t" + escape_field(e.err_msg) + "\n";
     }
@@ -146,10 +146,10 @@ static std::string format_get_response(const usp::GetResponse& resp) {
 
 static std::string format_set_response(const usp::SetResponse& resp) {
     std::string out;
-    for (auto& path : resp.updated) {
+    for (const auto& path : resp.updated) {
         out += "UPDATED\t" + escape_field(path) + "\n";
     }
-    for (auto& e : resp.errors) {
+    for (const auto& e : resp.errors) {
         out += "ERROR\t" + escape_field(e.path) + "\t" +
                std::to_string(e.err_code) + "\t" + escape_field(e.err_msg) + "\n";
     }

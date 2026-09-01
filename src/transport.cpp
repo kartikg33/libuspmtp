@@ -24,6 +24,7 @@
 
 #include "transport.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
@@ -182,7 +183,7 @@ std::optional<TransportError> Transport::send(const proto::Record& record) {
     if (auto e = write_all(UDS_SYNC.data(), UDS_SYNC.size())) return e;
 
     /* Outer length (big-endian) */
-    uint8_t olen_buf[4] = {
+    const uint8_t olen_buf[4] = {
         static_cast<uint8_t>((outer_len >> 24) & 0xFFu),
         static_cast<uint8_t>((outer_len >> 16) & 0xFFu),
         static_cast<uint8_t>((outer_len >>  8) & 0xFFu),
@@ -195,7 +196,7 @@ std::optional<TransportError> Transport::send(const proto::Record& record) {
     if (auto e = write_all(&ftype, 1)) return e;
 
     /* TLV: value length (big-endian) */
-    uint8_t vlen_buf[4] = {
+    const uint8_t vlen_buf[4] = {
         static_cast<uint8_t>((tlv_value_len >> 24) & 0xFFu),
         static_cast<uint8_t>((tlv_value_len >> 16) & 0xFFu),
         static_cast<uint8_t>((tlv_value_len >>  8) & 0xFFu),
@@ -221,13 +222,15 @@ std::variant<proto::Record, TransportError> Transport::recv() {
         return *err;
     }
 
-    for (auto tlv : std::get<std::vector<TlvView>>(parsed)) {
-        if (tlv.type == FRAME_TYPE_ERROR) {
-            return TransportError::protocol("ob-uspa error frame: " + tlv_string(tlv));
-        }
+    const auto& tlvs = std::get<std::vector<TlvView>>(parsed);
+
+    const auto err_it = std::find_if(tlvs.begin(), tlvs.end(),
+        [](const TlvView& tlv) { return tlv.type == FRAME_TYPE_ERROR; });
+    if (err_it != tlvs.end()) {
+        return TransportError::protocol("ob-uspa error frame: " + tlv_string(*err_it));
     }
 
-    for (auto tlv : std::get<std::vector<TlvView>>(parsed)) {
+    for (const auto& tlv : tlvs) {
         if (tlv.type != FRAME_TYPE_USP_RECORD) {
             continue;
         }
@@ -251,7 +254,7 @@ std::optional<TransportError> Transport::send_handshake(const std::string& endpo
 
     if (auto e = write_all(UDS_SYNC.data(), UDS_SYNC.size())) return e;
 
-    uint8_t olen_buf[4] = {
+    const uint8_t olen_buf[4] = {
         static_cast<uint8_t>((outer_len >> 24) & 0xFFu),
         static_cast<uint8_t>((outer_len >> 16) & 0xFFu),
         static_cast<uint8_t>((outer_len >>  8) & 0xFFu),
@@ -262,7 +265,7 @@ std::optional<TransportError> Transport::send_handshake(const std::string& endpo
     uint8_t ftype = FRAME_TYPE_HANDSHAKE;
     if (auto e = write_all(&ftype, 1)) return e;
 
-    uint8_t vlen_buf[4] = {
+    const uint8_t vlen_buf[4] = {
         static_cast<uint8_t>((tlv_value_len >> 24) & 0xFFu),
         static_cast<uint8_t>((tlv_value_len >> 16) & 0xFFu),
         static_cast<uint8_t>((tlv_value_len >>  8) & 0xFFu),
@@ -287,16 +290,18 @@ std::variant<std::vector<uint8_t>, TransportError> Transport::recv_handshake() {
         return *err;
     }
 
-    for (auto item : std::get<std::vector<TlvView>>(parsed)) {
-        if (item.type == FRAME_TYPE_ERROR) {
-            return TransportError::connection_failed("ob-uspa rejected handshake: " + tlv_string(item));
-        }
+    const auto& items = std::get<std::vector<TlvView>>(parsed);
+
+    const auto err_it = std::find_if(items.begin(), items.end(),
+        [](const TlvView& item) { return item.type == FRAME_TYPE_ERROR; });
+    if (err_it != items.end()) {
+        return TransportError::connection_failed("ob-uspa rejected handshake: " + tlv_string(*err_it));
     }
 
-    for (auto item : std::get<std::vector<TlvView>>(parsed)) {
-        if (item.type == FRAME_TYPE_HANDSHAKE) {
-            return std::vector<uint8_t>(item.value.begin(), item.value.end());
-        }
+    const auto hs_it = std::find_if(items.begin(), items.end(),
+        [](const TlvView& item) { return item.type == FRAME_TYPE_HANDSHAKE; });
+    if (hs_it != items.end()) {
+        return std::vector<uint8_t>(hs_it->value.begin(), hs_it->value.end());
     }
 
     return TransportError::protocol("handshake response did not contain a Handshake TLV");
