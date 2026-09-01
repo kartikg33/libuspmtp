@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
         ca-certificates \
+        libprotobuf-dev \
+        protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -42,6 +44,7 @@ WORKDIR /src
 COPY CMakeLists.txt ./
 COPY cmake/           cmake/
 COPY include/         include/
+COPY proto/           proto/
 COPY src/             src/
 COPY examples/cpp/    examples/cpp/
 
