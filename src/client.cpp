@@ -136,6 +136,17 @@ static std::optional<proto::Notify> extract_notify(const proto::Record& record) 
     return *notify;
 }
 
+/* True if an ADD result indicates the subscription was already registered,
+ * which is not a failure: the subscription is present either because this
+ * ADD created it or because it already existed on the agent.  Success for a
+ * subscription requires that it exists (newly created or pre-existing), not
+ * that it was created by this specific ADD. */
+static bool is_already_subscribed(const proto::AddOperationFailure& f) {
+    if (f.err_code == 7025) return true; /* subscription ID already in use */
+    return f.err_msg.find("already in use") != std::string::npos ||
+           f.err_msg.find("already exists") != std::string::npos;
+}
+
 /* Handle an incoming record that might be a Notify.
  * Returns nullopt if the record was a Notify (handled).
  * Returns the record itself if it was not a Notify (pass back to caller). */
@@ -302,20 +313,25 @@ void session_worker(std::stop_token stop_token,
                             if (msg->body) {
                                 if (auto* resp_var = std::get_if<proto::Response>(&msg->body->msg_body)) {
                                     if (auto* ar = std::get_if<proto::AddResp>(&resp_var->resp_type)) {
+                                        /* A subscription "already exists" failure is a success:
+                                         * the subscription is registered whether it was created
+                                         * by this ADD or previously.  Any other failure is real. */
                                         ok = true;
                                         for (auto& cor : ar->created_obj_results) {
-                                            if (cor.oper_status) {
-                                                if (auto* f = std::get_if<proto::AddOperationFailure>(
-                                                        &cor.oper_status->oper_status)) {
-                                                    ok = false;
-                                                    err_detail = "subscription ADD failed for '" +
-                                                                 cor.requested_path + "': " + f->err_msg;
-                                                    break;
-                                                }
+                                            if (!cor.oper_status) continue;
+                                            if (auto* f = std::get_if<proto::AddOperationFailure>(
+                                                    &cor.oper_status->oper_status)) {
+                                                if (is_already_subscribed(*f))
+                                                    continue;
+                                                ok = false;
+                                                err_detail = "subscription ADD failed for '" +
+                                                             cor.requested_path + "': " + f->err_msg;
+                                                break;
                                             }
                                         }
                                     }
                                 } else if (auto* eb = std::get_if<proto::ErrorBody>(&msg->body->msg_body)) {
+                                    ok = false;
                                     err_detail = "agent error " + std::to_string(eb->err_code) +
                                                  ": " + eb->err_msg;
                                 }
