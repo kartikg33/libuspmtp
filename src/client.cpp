@@ -369,6 +369,56 @@ void session_worker(std::stop_token stop_token,
     }
 }
 
+/* Complete the UDS session-establishment handshake.
+ *
+ * Returns nullopt on success.  On failure returns a TransportError that the
+ * caller (ensure_session) converts and throws.
+ *
+ * The agent expects a UDSConnectRecord to begin a controller session; it
+ * acknowledges with its own UDSConnectRecord before it will process
+ * NoSessionContext requests.  Without this handshake the agent only ever
+ * responds with a UDSConnectRecord and libuspmtp would report
+ * "expected NoSessionContextRecord in response". */
+static std::optional<TransportError>
+establish_uds_session(Transport& transport,
+                      const std::string& from_id,
+                      const std::string& to_id,
+                      std::chrono::seconds timeout)
+{
+    proto::Record connect_record;
+    connect_record.version           = "1.5";
+    connect_record.to_id             = to_id;
+    connect_record.from_id           = from_id;
+    connect_record.payload_security  = 0;
+    connect_record.record_type       = proto::UdsConnectRecord{};
+
+    if (auto err = transport.send(connect_record))
+        return err;
+
+    /* Await the agent's UDSConnectRecord acknowledgement. */
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        auto result = transport.recv();
+
+        if (auto* rec = std::get_if<proto::Record>(&result)) {
+            if (std::holds_alternative<proto::UdsConnectRecord>(rec->record_type))
+                return std::nullopt; /* Session established. */
+
+            /* Unexpected record at handshake. */
+            return TransportError::protocol(
+                "expected UDSConnectRecord during session establishment");
+        }
+
+        auto& err = std::get<TransportError>(result);
+        if (err.is_timeout())
+            continue; /* Keep waiting until the deadline. */
+        return err;
+    }
+
+    return TransportError::connection_failed(
+        "no UDS Connect acknowledgement from agent (session not established)");
+}
+
 } // anonymous namespace
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -417,6 +467,17 @@ std::shared_ptr<UspController::SessionState> UspController::ensure_session() {
         throw *err; /* caller converts to UspError */
 
     Transport transport = std::move(std::get<Transport>(transport_result));
+
+    /* Perform the UDS session-establishment handshake required by the
+     * OB-USPA UDS MTP.  After the socket handshake completes, the agent
+     * responds to requests with a UDSConnectRecord until the controller
+     * establishes the USP session.  Send a UDSConnectRecord and wait for
+     * the agent's UDSConnectRecord acknowledgement before any commands are
+     * processed. */
+    if (auto connect_err = establish_uds_session(transport, endpoint_id_,
+                                                  agent_endpoint_id_, timeout_)) {
+        throw *connect_err;
+    }
 
     auto state = std::make_shared<SessionState>();
 
