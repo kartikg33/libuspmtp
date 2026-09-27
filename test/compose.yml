@@ -1,27 +1,29 @@
 #
 # test/compose.yml
 #
-# Proves that the libuspmtp C example and C++ example each build and run
+# Proves that the libuspmtp C, C++ and Rust examples each build and run
 # (independently of one another) against the same OB-USPA USP agent.
 #
-#   * The C and C++ services build their own image from this repo with only
-#     that language's example — no shared build artifacts between the two,
+#   * The C, C++ and Rust services build their own image from this repo with
+#     only that language's example — no shared build artifacts between them,
 #     so each service is truly independent.
-#   * Each example is a standalone app whose CMakeLists pulls the library in
-#     via add_subdirectory and links its single binary against a statically
-#     built libuspmtp.
-#   * obuspa provides a shared UDS MTP socket for both examples to talk to.
+#   * Each example is a standalone app whose build pulls the library in
+#     (C/C++ via add_subdirectory, Rust against the installed shared library)
+#     and links its single binary (C/C++ statically, Rust dynamically
+#     against libuspmtp.so).
+#   * obuspa provides a shared UDS MTP socket for the examples to talk to.
 #
 # Usage (from this repo's root):
 #   docker compose -f test/compose.yml up --build
 #
 # Expected output:
-#   libuspmtp-c-example   GETs Device.DeviceInfo. over the UDS MTP socket.
-#   libuspmtp-cpp-example GETs Device.DeviceInfo. over the UDS MTP socket.
+#   libuspmtp-c-example   GETs the baseline (LocalAgent, UnixDomainSockets,
+#   libuspmtp-cpp-example DeviceInfo) over the UDS MTP socket.
+#   libuspmtp-rust-example
 #
-# The two example services reference this repo as their build context, so
+# The example services reference this repo as their build context, so
 # they work even when this compose file is just used as a reference for
-# building only the C++ example inside a different repository.
+# building only one example inside a different repository.
 #
 
 services:
@@ -61,6 +63,23 @@ services:
     environment:
       USP_SOCKET_PATH: /var/run/usp/usp.sock
       USP_APP_ENDPOINT_ID: proto::libuspmtp-cpp-example
+      USP_AGENT_ENDPOINT_ID: proto::api-gateway
+    depends_on:
+      - obuspa
+    restart: unless-stopped
+
+  libuspmtp-rust-example:
+    # Builds libuspmtp (shared) and the Rust example, then runs it.
+    # Unlike the C/C++ examples, the Rust binary links libuspmtp.so
+    # dynamically.
+    build:
+      context: ..
+      dockerfile: examples/rust/Dockerfile
+    volumes:
+      - usp_socket:/var/run/usp
+    environment:
+      USP_SOCKET_PATH: /var/run/usp/usp.sock
+      USP_APP_ENDPOINT_ID: proto::libuspmtp-rust-example
       USP_AGENT_ENDPOINT_ID: proto::api-gateway
     depends_on:
       - obuspa

@@ -1,0 +1,16 @@
+[package]
+name = "libuspmtp-example-rust"
+version = "0.1.0"
+edition = "2021"
+description = "Rust USP client example for libuspmtp (dynamically links the shared library)"
+license = "Apache-2.0"
+
+# No dependencies: the example uses only the Rust standard library plus a
+# hand-written FFI layer (src/ffi.rs), so it builds fully offline.
+
+[[bin]]
+name = "example_rust"
+path = "src/main.rs"
+
+[profile.release]
+strip = true
