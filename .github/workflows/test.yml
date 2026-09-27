@@ -1,0 +1,139 @@
+#
+# Copyright 2026 Kartik Gohil
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+name: Test – compose examples
+
+# Proves, on every PR, that the C, C++ and Rust examples build and establish
+# live USP MTP sessions against the OB-USPA agent:
+#   * all three images build from this repo,
+#   * each example GETs the baseline (LocalAgent, UnixDomainSockets,
+#     DeviceInfo) with values matching the agent's data model,
+#   * each example activates its subscription and receives notifications.
+#
+# Note: a fresh agent starts per run, so the agent's 5-controller table
+# (factory controller + 3 examples) never fills up here.
+#
+# Timing: the verification step polls container logs every 5s and returns as
+# soon as each pattern appears, so it typically completes in seconds once
+# the stack is up (the per-pattern timeouts are upper bounds, not sleeps).
+# The job duration is dominated by building the images, not by the test.
+#
+# Timeouts: every step carries its own timeout-minutes so a hung docker or
+# build step fails fast instead of burning the 30-minute job budget, and
+# the verification loop fails fast per service (worst case ~7 min, not the
+# sum of all bounds). Nothing here can hang forever.
+#
+# Ordering: steps in a job always run strictly sequentially, so the log
+# dump and tear-down steps below can only start after the verification
+# step has fully completed (passed or failed). Their `if: always()` only
+# controls skip-on-failure behaviour, never concurrency — no extra
+# gating or step outputs are needed.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Build examples and verify live USP sessions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 5
+
+      - name: Build example images
+        timeout-minutes: 20
+        run: docker compose -f test/compose.yml build
+
+      - name: Start stack
+        timeout-minutes: 5
+        run: >
+          docker compose -f test/compose.yml up -d
+          obuspa
+          libuspmtp-c-example
+          libuspmtp-cpp-example
+          libuspmtp-rust-example
+
+      - name: Verify live USP sessions
+        timeout-minutes: 10
+        run: |
+          wait_for_log() {
+            local service="$1" pattern="$2" timeout="$3"
+            echo "Waiting up to ${timeout}s for '${pattern}' in ${service} ..."
+            local elapsed=0
+            while [ "$elapsed" -lt "$timeout" ]; do
+              if docker compose -f test/compose.yml logs --no-color "$service" 2>/dev/null \
+                  | grep -Fq "$pattern"; then
+                echo "OK: '${pattern}' seen in ${service}"
+                return 0
+              fi
+              sleep 5
+              elapsed=$((elapsed + 5))
+            done
+            echo "FAIL: timed out waiting for '${pattern}' in ${service}"
+            return 1
+          }
+
+          assert_running() {
+            local service="$1"
+            local cid
+            cid="$(docker compose -f test/compose.yml ps -q "$service")"
+            if [ -z "$cid" ]; then
+              echo "FAIL: no container for ${service}"
+              return 1
+            fi
+            local status restarts
+            status="$(docker inspect "$cid" --format='{{.State.Status}}')"
+            restarts="$(docker inspect "$cid" --format='{{.RestartCount}}')"
+            echo "${service}: status=${status} restarts=${restarts}"
+            [ "$status" = "running" ] && [ "$restarts" -eq 0 ]
+          }
+
+          failed=0
+          for svc in libuspmtp-c-example libuspmtp-cpp-example libuspmtp-rust-example; do
+            # Baseline GET proves the MTP session works ...
+            # Fail fast per service (break): the always-run log dump below
+            # preserves full diagnostics, so there is no value in waiting
+            # out every remaining timeout once a service is known-bad.
+            wait_for_log "$svc" "=== GET baseline (LocalAgent, UnixDomainSockets, DeviceInfo) ===" 120 || { failed=1; break; }
+            # ... and these values prove it is the real agent data model.
+            wait_for_log "$svc" "Device.LocalAgent.EndpointID = proto::api-gateway" 60 || { failed=1; break; }
+            wait_for_log "$svc" "Device.UnixDomainSockets.UnixDomainSocket.1.Path = /var/run/obuspa/usp.sock" 60 || { failed=1; break; }
+            # Subscription + first async notification prove the Notify path works.
+            wait_for_log "$svc" "Subscription active." 60 || { failed=1; break; }
+            wait_for_log "$svc" "=== Notification received" 120 || { failed=1; break; }
+            assert_running "$svc" || { failed=1; break; }
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Test verification FAILED"
+            exit 1
+          fi
+          echo "All examples established live USP sessions and fetched agent data."
+
+      - name: Show service logs
+        if: always()
+        timeout-minutes: 2
+        run: docker compose -f test/compose.yml logs --tail=150
+
+      - name: Tear down
+        if: always()
+        timeout-minutes: 2
+        run: docker compose -f test/compose.yml down -v

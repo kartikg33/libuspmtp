@@ -1,4 +1,3 @@
-#
 # Copyright 2026 Kartik Gohil
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,29 +13,20 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-#
-name: cppcheck
 
-on:
-  pull_request:
-  push:
-    branches: [main]
+[package]
+name = "libuspmtp-example-rust"
+version = "0.1.0"
+edition = "2021"
+description = "Rust USP client example for libuspmtp (dynamically links the shared library)"
+license = "Apache-2.0"
 
-jobs:
-  cppcheck:
-    name: cppcheck static analysis
-    runs-on: ubuntu-latest
+# No dependencies: the example uses only the Rust standard library plus a
+# hand-written FFI layer (src/ffi.rs), so it builds fully offline.
 
-    steps:
-      - uses: actions/checkout@v4
+[[bin]]
+name = "example_rust"
+path = "src/main.rs"
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cppcheck libprotobuf-dev protobuf-compiler cmake build-essential
-
-      - name: Run cppcheck
-        run: |
-          cppcheck \
-            --enable=warning,style,performance,portability \
-            --error-exitcode=1 \
-            --suppress=missingIncludeSystem \
-            src/
+[profile.release]
+strip = true

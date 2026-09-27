@@ -1,5 +1,22 @@
 # syntax=docker/dockerfile:1
 #
+# Copyright 2026 Kartik Gohil
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+#
 # examples/c/Dockerfile
 #
 # Builds libuspmtp (static) and the C example binary, then runs it against
@@ -40,22 +57,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
-# Copy only what is needed to build the library and the C example.
-COPY CMakeLists.txt ./
-COPY cmake/           cmake/
-COPY include/         include/
-COPY proto/           proto/
-COPY src/             src/
-COPY examples/c/      examples/c/
+# Copy the library (needed as a dependency of the example build) and the
+# C example itself.
+COPY CMakeLists.txt        ./
+COPY cmake/                cmake/
+COPY include/              include/
+COPY proto/                proto/
+COPY src/                  src/
+COPY examples/c/           examples/c/
 
-RUN cmake -S . -B /build \
+# Build the C example as its own application. The example's CMakeLists pulls
+# the library in via add_subdirectory and links the binary against it
+# (statically), so the top-level project only builds the library.
+RUN cmake -S examples/c -B /build \
         -DCMAKE_BUILD_TYPE=Release \
-        -DLIBUSPMTP_BUILD_EXAMPLES=ON \
+        -DLIBUSPMTP_SOURCE_DIR=/src \
         -DLIBUSPMTP_BUILD_TESTS=OFF \
     && cmake --build /build --parallel "$(nproc)"
 
 # ── Stage 2: runtime ───────────────────────────────────────────────────────
 FROM debian:bookworm-slim
+
+# The static libuspmtp.a pulls in the C++ runtime and the protobuf shared
+# library at link time, so the binary needs them present at runtime.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libstdc++6 \
+        libprotobuf32 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Default socket path; override with -e USP_SOCKET_PATH=...
 ENV USP_SOCKET_PATH=/var/run/usp/broker_agent_path

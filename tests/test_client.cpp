@@ -130,8 +130,8 @@ static void test_usp_controller_new_null() {
     CHECK(usp_controller_new("/tmp/x.sock", "app", nullptr, 10) == nullptr);
 }
 
-static void test_ffi_set_timeout() {
-    std::puts("test_ffi_set_timeout");
+static void test_set_timeout() {
+    std::puts("test_set_timeout");
 
     auto* h = usp_controller_new("/tmp/nonexistent_uspmtp.sock",
                                   "proto::app", "proto::agent", 5);
@@ -139,16 +139,16 @@ static void test_ffi_set_timeout() {
     if (!h) return;
 
     int rc = usp_controller_set_timeout(h, 15);
-    CHECK_EQ(rc, USP_FFI_OK);
+    CHECK_EQ(rc, USP_OK);
 
     rc = usp_controller_set_timeout(nullptr, 15);
-    CHECK_EQ(rc, USP_FFI_ERR_NULL_POINTER);
+    CHECK_EQ(rc, USP_ERR_NULL_POINTER);
 
     usp_controller_free(h);
 }
 
-static void test_ffi_last_error() {
-    std::puts("test_ffi_last_error");
+static void test_last_error() {
+    std::puts("test_last_error");
 
     /* Buffer-too-small case. */
     auto* h = usp_controller_new("/tmp/nonexistent_uspmtp.sock",
@@ -160,30 +160,30 @@ static void test_ffi_last_error() {
     char value[256];
     int rc = usp_controller_get(h, "Device.DeviceInfo.SerialNumber",
                                  value, sizeof(value));
-    CHECK(rc == USP_FFI_ERR_USP);
+    CHECK(rc == USP_ERR_USP);
 
     char err[512];
     int err_rc = usp_controller_last_error(h, err, sizeof(err));
-    CHECK_EQ(err_rc, USP_FFI_OK);
+    CHECK_EQ(err_rc, USP_OK);
     CHECK(err[0] != '\0'); /* non-empty error message */
 
     /* Null handle. */
     err_rc = usp_controller_last_error(nullptr, err, sizeof(err));
-    CHECK_EQ(err_rc, USP_FFI_ERR_NULL_POINTER);
+    CHECK_EQ(err_rc, USP_ERR_NULL_POINTER);
 
     usp_controller_free(h);
 }
 
-static void test_ffi_get_null_guard() {
-    std::puts("test_ffi_get_null_guard");
+static void test_get_null_guard() {
+    std::puts("test_get_null_guard");
 
     char value[64];
     int rc = usp_controller_get(nullptr, "Device.X", value, sizeof(value));
-    CHECK_EQ(rc, USP_FFI_ERR_NULL_POINTER);
+    CHECK_EQ(rc, USP_ERR_NULL_POINTER);
 }
 
-static void test_ffi_not_implemented_stubs() {
-    std::puts("test_ffi_not_implemented_stubs");
+static void test_not_implemented_stubs() {
+    std::puts("test_not_implemented_stubs");
 
     auto* h = usp_controller_new("/tmp/nonexistent_uspmtp.sock",
                                   "proto::app", "proto::agent", 1);
@@ -193,19 +193,19 @@ static void test_ffi_not_implemented_stubs() {
     int rc;
 
     rc = usp_controller_register(h, "Device.X.");
-    CHECK_EQ(rc, USP_FFI_ERR_USP);
+    CHECK_EQ(rc, USP_ERR_USP);
 
     rc = usp_controller_delete(h, "Device.X.1.");
-    CHECK_EQ(rc, USP_FFI_ERR_USP);
+    CHECK_EQ(rc, USP_ERR_USP);
 
     rc = usp_controller_get_supported_dm(h, "Device.");
-    CHECK_EQ(rc, USP_FFI_ERR_USP);
+    CHECK_EQ(rc, USP_ERR_USP);
 
     rc = usp_controller_get_instances(h, "Device.X.");
-    CHECK_EQ(rc, USP_FFI_ERR_USP);
+    CHECK_EQ(rc, USP_ERR_USP);
 
     rc = usp_controller_get_supported_protocol(h);
-    CHECK_EQ(rc, USP_FFI_ERR_USP);
+    CHECK_EQ(rc, USP_ERR_USP);
 
     char err[512];
     usp_controller_last_error(h, err, sizeof(err));
@@ -381,10 +381,10 @@ int main() {
     test_usp_error_kinds();
     test_vendor_defined_error_codes();
     test_usp_controller_new_null();
-    test_ffi_set_timeout();
-    test_ffi_last_error();
-    test_ffi_get_null_guard();
-    test_ffi_not_implemented_stubs();
+    test_set_timeout();
+    test_last_error();
+    test_get_null_guard();
+    test_not_implemented_stubs();
     test_usp_controller_construction();
     test_get_with_mock_agent();
 

@@ -1,3 +1,20 @@
+#
+# Copyright 2026 Kartik Gohil
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
 cmake_minimum_required(VERSION 3.20)
 project(libuspmtp VERSION 0.1.0 LANGUAGES C CXX)
 
@@ -18,9 +35,8 @@ protobuf_generate_cpp(LIBUSPMTP_PROTO_SRCS LIBUSPMTP_PROTO_HDRS
 )
 
 # ── Options ────────────────────────────────────────────────────────────────
-option(LIBUSPMTP_BUILD_SHARED   "Build shared library (default: static)" OFF)
-option(LIBUSPMTP_BUILD_TESTS    "Build test executables" OFF)
-option(LIBUSPMTP_BUILD_EXAMPLES "Build example executables" OFF)
+option(LIBUSPMTP_BUILD_SHARED "Build shared library (default: static)" OFF)
+option(LIBUSPMTP_BUILD_TESTS  "Build test executables" OFF)
 
 # ── Source files ───────────────────────────────────────────────────────────
 set(LIBUSPMTP_SOURCES
@@ -82,19 +98,6 @@ if(LIBUSPMTP_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/include)
         add_test(NAME ${test_name} COMMAND ${test_name})
     endforeach()
-endif()
-
-# ── Examples ───────────────────────────────────────────────────────────────
-if(LIBUSPMTP_BUILD_EXAMPLES)
-    add_executable(example_c examples/c/basic.c)
-    target_link_libraries(example_c PRIVATE libuspmtp::libuspmtp)
-    target_include_directories(example_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-    add_executable(example_cpp examples/cpp/basic.cpp)
-    target_link_libraries(example_cpp PRIVATE libuspmtp::libuspmtp Threads::Threads)
-    target_include_directories(example_cpp PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
 # ── Install rules ──────────────────────────────────────────────────────────

@@ -42,17 +42,17 @@
  * Error model
  * -----------
  * All functions that can fail return an int status code.  The meanings are:
- *   USP_FFI_OK                 – success
- *   USP_FFI_ERR_NULL_POINTER   – a required pointer argument was NULL
- *   USP_FFI_ERR_INVALID_UTF8   – a string argument contained invalid UTF-8
- *   USP_FFI_ERR_BUFFER_TOO_SMALL – the output buffer was too small
- *   USP_FFI_ERR_RUNTIME        – failed to initialise the internal runtime
- *   USP_FFI_ERR_USP            – a USP-level error occurred (see last_error)
- *   USP_FFI_ERR_NOT_FOUND      – the requested parameter was not in the response
- *   USP_FFI_ERR_INVALID_ARGUMENT – an argument had an invalid value
- *   USP_FFI_ERR_PANIC          – an internal panic / unhandled exception
+ *   USP_OK                 – success
+ *   USP_ERR_NULL_POINTER   – a required pointer argument was NULL
+ *   USP_ERR_INVALID_UTF8   – a string argument contained invalid UTF-8
+ *   USP_ERR_BUFFER_TOO_SMALL – the output buffer was too small
+ *   USP_ERR_RUNTIME        – failed to initialise the internal runtime
+ *   USP_ERR_USP            – a USP-level error occurred (see last_error)
+ *   USP_ERR_NOT_FOUND      – the requested parameter was not in the response
+ *   USP_ERR_INVALID_ARGUMENT – an argument had an invalid value
+ *   USP_ERR_PANIC          – an internal panic / unhandled exception
  *
- * After USP_FFI_ERR_USP, call usp_controller_last_error() to retrieve a
+ * After USP_ERR_USP, call usp_controller_last_error() to retrieve a
  * human-readable description of the error.
  *
  * Response encoding (get_many, set_many, operate, subscribe_*_and_get)
@@ -75,9 +75,9 @@
  *
  * Subscription notification type constants
  * -----------------------------------------
- *   USP_FFI_SUBSCRIPTION_VALUE_CHANGE    – notify when a parameter changes
- *   USP_FFI_SUBSCRIPTION_OBJECT_CREATION – notify when an instance is created
- *   USP_FFI_SUBSCRIPTION_OBJECT_DELETION – notify when an instance is deleted
+ *   USP_SUBSCRIPTION_VALUE_CHANGE    – notify when a parameter changes
+ *   USP_SUBSCRIPTION_OBJECT_CREATION – notify when an instance is created
+ *   USP_SUBSCRIPTION_OBJECT_DELETION – notify when an instance is deleted
  *
  * USP error codes (TR-369 Annex A)
  * ---------------------------------
@@ -175,23 +175,23 @@
 #define UspErrorCode_VENDOR_DEFINED_MIN         USP_ERROR_CODE_VENDOR_DEFINED_MIN
 #define UspErrorCode_VENDOR_DEFINED_MAX         USP_ERROR_CODE_VENDOR_DEFINED_MAX
 
-/* ── FFI status codes ─────────────────────────────────────────────────────── */
+/* ── Status codes ────────────────────────────────────────────────────────── */
 
-#define USP_FFI_OK                  0
-#define USP_FFI_ERR_NULL_POINTER    1
-#define USP_FFI_ERR_INVALID_UTF8    2
-#define USP_FFI_ERR_BUFFER_TOO_SMALL 3
-#define USP_FFI_ERR_RUNTIME         4
-#define USP_FFI_ERR_USP             5
-#define USP_FFI_ERR_NOT_FOUND       6
-#define USP_FFI_ERR_INVALID_ARGUMENT 7
-#define USP_FFI_ERR_PANIC           8
+#define USP_OK                  0
+#define USP_ERR_NULL_POINTER    1
+#define USP_ERR_INVALID_UTF8    2
+#define USP_ERR_BUFFER_TOO_SMALL 3
+#define USP_ERR_RUNTIME         4
+#define USP_ERR_USP             5
+#define USP_ERR_NOT_FOUND       6
+#define USP_ERR_INVALID_ARGUMENT 7
+#define USP_ERR_PANIC           8
 
 /* ── Subscription notification type constants ─────────────────────────────── */
 
-#define USP_FFI_SUBSCRIPTION_VALUE_CHANGE    0
-#define USP_FFI_SUBSCRIPTION_OBJECT_CREATION 1
-#define USP_FFI_SUBSCRIPTION_OBJECT_DELETION 2
+#define USP_SUBSCRIPTION_VALUE_CHANGE    0
+#define USP_SUBSCRIPTION_OBJECT_CREATION 1
+#define USP_SUBSCRIPTION_OBJECT_DELETION 2
 
 /* ── Opaque handle type ───────────────────────────────────────────────────── */
 
@@ -288,11 +288,11 @@ void usp_controller_free(struct UspControllerHandle *handle);
  *   out_value_len – size of out_value in bytes, including space for the NUL.
  *
  * Returns:
- *   USP_FFI_OK              – success; out_value contains the value.
- *   USP_FFI_ERR_NOT_FOUND   – path was not present in the agent response.
- *   USP_FFI_ERR_BUFFER_TOO_SMALL – out_value_len is too small for the value.
- *   USP_FFI_ERR_USP         – agent returned an error (see usp_controller_last_error).
- *   USP_FFI_ERR_NULL_POINTER – handle or path is NULL.
+ *   USP_OK              – success; out_value contains the value.
+ *   USP_ERR_NOT_FOUND   – path was not present in the agent response.
+ *   USP_ERR_BUFFER_TOO_SMALL – out_value_len is too small for the value.
+ *   USP_ERR_USP         – agent returned an error (see usp_controller_last_error).
+ *   USP_ERR_NULL_POINTER – handle or path is NULL.
  *
  * Blocking: yes, waits for the agent response (up to timeout_secs).
  * Callbacks: none.
@@ -319,7 +319,7 @@ int usp_controller_get(
  *
  * Response format: see header file comment above.
  *
- * Returns: USP_FFI_OK or an error code.
+ * Returns: USP_OK or an error code.
  * Blocking: yes.
  */
 LIBUSP_API
@@ -340,7 +340,7 @@ int usp_controller_get_many(
  *   path   – NUL-terminated full parameter path (e.g. "Device.WiFi.SSID.1.SSID").
  *   value  – NUL-terminated new value string.
  *
- * Returns: USP_FFI_OK or an error code.
+ * Returns: USP_OK or an error code.
  * Blocking: yes.
  */
 LIBUSP_API
@@ -364,7 +364,7 @@ int usp_controller_set(
  *
  * Response format: see header file comment above.
  *
- * Returns: USP_FFI_OK or an error code.
+ * Returns: USP_OK or an error code.
  * Blocking: yes.
  */
 LIBUSP_API
@@ -394,7 +394,7 @@ int usp_controller_set_many(
  *
  * Response format: see header file comment above.
  *
- * Returns: USP_FFI_OK or an error code.
+ * Returns: USP_OK or an error code.
  * Blocking: yes.
  */
 LIBUSP_API
@@ -420,16 +420,16 @@ int usp_controller_operate(
  *   handle            – non-NULL handle.
  *   path              – NUL-terminated data-model path to subscribe on.
  *   notification_type – one of:
- *                         USP_FFI_SUBSCRIPTION_VALUE_CHANGE
- *                         USP_FFI_SUBSCRIPTION_OBJECT_CREATION
- *                         USP_FFI_SUBSCRIPTION_OBJECT_DELETION
+ *                         USP_SUBSCRIPTION_VALUE_CHANGE
+ *                         USP_SUBSCRIPTION_OBJECT_CREATION
+ *                         USP_SUBSCRIPTION_OBJECT_DELETION
  *   callback          – function called on each notification; may be NULL.
  *   user_data         – opaque pointer passed verbatim to callback.
  *                       Must remain valid until the handle is freed.
  *   out_result        – caller-supplied buffer for the GET response.
  *   out_result_len    – size of out_result.
  *
- * Returns: USP_FFI_OK or an error code.
+ * Returns: USP_OK or an error code.
  * Blocking: yes (blocks until subscription ADD and initial GET complete).
  * Callbacks: callback may be invoked asynchronously from a background thread
  *            AFTER this function returns.
@@ -460,7 +460,7 @@ int usp_controller_subscribe_and_get(
  *   out_result         – caller-supplied buffer for the GET response.
  *   out_result_len     – size of out_result.
  *
- * Returns: USP_FFI_OK or an error code.
+ * Returns: USP_OK or an error code.
  * Blocking: yes.
  * Callbacks: as for usp_controller_subscribe_and_get.
  */
@@ -478,7 +478,7 @@ int usp_controller_subscribe_many_and_get(
 /*
  * usp_controller_register
  *
- * Send a USP REGISTER request (not yet implemented; returns USP_FFI_ERR_USP).
+ * Send a USP REGISTER request (not yet implemented; returns USP_ERR_USP).
  */
 LIBUSP_API
 int usp_controller_register(
@@ -488,7 +488,7 @@ int usp_controller_register(
 /*
  * usp_controller_add
  *
- * Send a USP ADD request (not yet implemented; returns USP_FFI_ERR_USP).
+ * Send a USP ADD request (not yet implemented; returns USP_ERR_USP).
  */
 LIBUSP_API
 int usp_controller_add(
@@ -501,7 +501,7 @@ int usp_controller_add(
 /*
  * usp_controller_delete
  *
- * Send a USP DELETE request (not yet implemented; returns USP_FFI_ERR_USP).
+ * Send a USP DELETE request (not yet implemented; returns USP_ERR_USP).
  */
 LIBUSP_API
 int usp_controller_delete(
@@ -511,7 +511,7 @@ int usp_controller_delete(
 /*
  * usp_controller_get_supported_dm
  *
- * Send a USP GetSupportedDM request (not yet implemented; returns USP_FFI_ERR_USP).
+ * Send a USP GetSupportedDM request (not yet implemented; returns USP_ERR_USP).
  */
 LIBUSP_API
 int usp_controller_get_supported_dm(
@@ -521,7 +521,7 @@ int usp_controller_get_supported_dm(
 /*
  * usp_controller_get_instances
  *
- * Send a USP GetInstances request (not yet implemented; returns USP_FFI_ERR_USP).
+ * Send a USP GetInstances request (not yet implemented; returns USP_ERR_USP).
  */
 LIBUSP_API
 int usp_controller_get_instances(
@@ -531,7 +531,7 @@ int usp_controller_get_instances(
 /*
  * usp_controller_get_supported_protocol
  *
- * Send a USP GetSupportedProtocol request (not yet implemented; returns USP_FFI_ERR_USP).
+ * Send a USP GetSupportedProtocol request (not yet implemented; returns USP_ERR_USP).
  */
 LIBUSP_API
 int usp_controller_get_supported_protocol(
@@ -546,7 +546,7 @@ int usp_controller_get_supported_protocol(
  *   handle       – non-NULL handle.
  *   timeout_secs – new timeout in seconds; 0 = use default (10 seconds).
  *
- * Returns: USP_FFI_OK or USP_FFI_ERR_NULL_POINTER.
+ * Returns: USP_OK or USP_ERR_NULL_POINTER.
  */
 LIBUSP_API
 int usp_controller_set_timeout(
@@ -574,7 +574,7 @@ int usp_error_is_vendor_defined(uint32_t code);
  *                  Must not be NULL.
  *   out_error_len – size of out_error in bytes.
  *
- * Returns: USP_FFI_OK or an error code.
+ * Returns: USP_OK or an error code.
  */
 LIBUSP_API
 int usp_controller_last_error(
