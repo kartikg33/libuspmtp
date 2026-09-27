@@ -164,6 +164,16 @@ static void handle_signal(int sig) {
 /* ── Main ──────────────────────────────────────────────────────────────── */
 
 int main(int argc, char** argv) {
+    /*
+     * Make stdout/stderr unbuffered so every line reaches `docker logs`
+     * immediately.  Without this, stdout is fully buffered when piped
+     * (no TTY) and early lines would sit in the stdio buffer while we
+     * block waiting for the agent, making a healthy-but-waiting container
+     * look dead to log-polling checks.
+     */
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     const char* arg_socket = (argc > 1) ? argv[1] : "/var/run/usp/broker_agent_path";
     const char* arg_app    = (argc > 2) ? argv[2] : "proto::myapp";
     const char* arg_agent  = (argc > 3) ? argv[3] : "proto::api-gateway";
@@ -200,18 +210,37 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    /* ── 1. GET baseline paths ───────────────────────────────────────── */
+    /* ── 1. GET baseline paths (retry until the agent is ready) ────── */
     printf("=== GET baseline (LocalAgent, UnixDomainSockets, DeviceInfo) ===\n");
     {
+        /*
+         * The agent may still be starting when this container starts, so
+         * retry the baseline GET until it succeeds.  A single early
+         * failure must not park this example forever with no data and no
+         * subscription.  Persistent failure exits non-zero so the
+         * container runtime restarts us instead of idling silently.
+         */
         char result[65536];
-        int rc = usp_controller_get_many(h, kBaselinePaths, kBaselinePathCount,
-                                         result, sizeof(result));
-        if (rc == USP_OK) {
-            print_get_result(result);
-        } else {
+        const int get_deadline_secs = 120;
+        int waited = 0;
+        for (;;) {
+            int rc = usp_controller_get_many(h, kBaselinePaths, kBaselinePathCount,
+                                             result, sizeof(result));
+            if (rc == USP_OK) {
+                print_get_result(result);
+                break;
+            }
             char err[512];
             usp_controller_last_error(h, err, sizeof(err));
-            fprintf(stderr, "GET failed (rc=%d): %s\n", rc, err);
+            if (waited >= get_deadline_secs) {
+                fprintf(stderr, "GET failed persistently (rc=%d): %s\n", rc, err);
+                fprintf(stderr, "Agent never became ready; exiting.\n");
+                usp_controller_free(h);
+                return 1;
+            }
+            fprintf(stderr, "GET failed (rc=%d): %s; retrying...\n", rc, err);
+            sleep(2);
+            waited += 2;
         }
     }
 
@@ -223,23 +252,38 @@ int main(int argc, char** argv) {
          * subscribe_and_get registers the subscription AND performs an
          * initial GET.  The callback fires on every subsequent notification.
          * user_data = write end of the self-pipe (cast to void*).
+         * Retried like the baseline GET: the USP session must exist
+         * before the subscription can be registered.
          */
-        int rc = usp_controller_subscribe_and_get(
-            h,
-            "Device.DeviceInfo.",
-            USP_SUBSCRIPTION_VALUE_CHANGE,
-            on_notification,
-            (void*)(intptr_t)pipe_wr,
-            result, sizeof(result));
+        const int sub_deadline_secs = 60;
+        int waited = 0;
+        for (;;) {
+            int rc = usp_controller_subscribe_and_get(
+                h,
+                "Device.DeviceInfo.",
+                USP_SUBSCRIPTION_VALUE_CHANGE,
+                on_notification,
+                (void*)(intptr_t)pipe_wr,
+                result, sizeof(result));
 
-        if (rc == USP_OK) {
-            printf("Subscription active.  Initial GET result:\n");
-            print_get_result(result);
-        } else {
+            if (rc == USP_OK) {
+                printf("Subscription active.  Initial GET result:\n");
+                print_get_result(result);
+                break;
+            }
             char err[512];
             usp_controller_last_error(h, err, sizeof(err));
-            fprintf(stderr, "subscribe_and_get failed (rc=%d): %s\n", rc, err);
-            fprintf(stderr, "Continuing without subscription.\n");
+            if (waited >= sub_deadline_secs) {
+                fprintf(stderr, "subscribe_and_get failed persistently (rc=%d): %s\n",
+                        rc, err);
+                fprintf(stderr, "Exiting.\n");
+                usp_controller_free(h);
+                return 1;
+            }
+            fprintf(stderr, "subscribe_and_get failed (rc=%d): %s; retrying...\n",
+                    rc, err);
+            sleep(2);
+            waited += 2;
         }
     }
 
