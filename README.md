@@ -972,6 +972,11 @@ Before submitting a change:
 
 Please keep pull requests focused and avoid mixing unrelated refactoring with functional changes.
 
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution workflow.
+
+To report a security vulnerability, follow [`SECURITY.md`](SECURITY.md) —
+do not open a public issue.
+
 ---
 
 # 🗺️ Roadmap
