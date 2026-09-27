@@ -8,8 +8,8 @@
 
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](#)
 [![C API](https://img.shields.io/badge/API-C%20ABI-informational.svg)](#)
-[![License](https://img.shields.io/badge/license-PLACEHOLDER-lightgrey.svg)](#)
-[![Build](https://img.shields.io/badge/build-PLACEHOLDER-lightgrey.svg)](#)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#-license)
+[![Build](https://github.com/kartikg33/libuspmtp/actions/workflows/build.yml/badge.svg)](https://github.com/kartikg33/libuspmtp/actions/workflows/build.yml)
 [![Tests](https://img.shields.io/badge/tests-PLACEHOLDER-lightgrey.svg)](#)
 [![Coverage](https://img.shields.io/badge/coverage-PLACEHOLDER-lightgrey.svg)](#)
 [![Release](https://img.shields.io/badge/release-PLACEHOLDER-lightgrey.svg)](#)
@@ -129,9 +129,10 @@ The library is designed with long-running processes, constrained systems, asynch
 | C++20 implementation | ✅ |
 | Static library | ✅ |
 | Shared library | ✅ |
-| C examples | 🚧 |
-| C++ examples | 🚧 |
-| Sanitizer builds | 🚧 |
+| C examples | ✅ |
+| C++ examples | ✅ |
+| Rust examples | ✅ |
+| Sanitizer builds | ✅ |
 | Package-manager distribution | 🚧 |
 
 > **Legend:** ✅ Implemented · 🚧 Planned / In progress · ❌ Not supported
@@ -143,6 +144,7 @@ The library is designed with long-running processes, constrained systems, asynch
 | API | Status | Description |
 |---|:---:|---|
 | `usp_controller_new()` | ✅ | Create a controller |
+| `usp_controller_free()` | ✅ | Destroy a controller and release its resources |
 | `usp_controller_set_timeout()` | ✅ | Configure operation timeout |
 | `usp_controller_get()` | ✅ | Retrieve parameters |
 | `usp_controller_get_many()` | ✅ | Retrieve multiple paths |
@@ -151,6 +153,8 @@ The library is designed with long-running processes, constrained systems, asynch
 | `usp_controller_operate()` | ✅ | Execute a USP command |
 | `usp_controller_subscribe_and_get()` | ✅ | Subscribe and retrieve initial state |
 | `usp_controller_subscribe_many_and_get()` | ✅ | Create multiple subscriptions and retrieve state |
+| `usp_controller_last_error()` | ✅ | Retrieve the last human-readable error |
+| `usp_error_is_vendor_defined()` | ✅ | Test whether a USP error code is vendor-defined |
 | `usp_controller_register()` | 🚧 | Register controller |
 | `usp_controller_add()` | 🚧 | Create object instance |
 | `usp_controller_delete()` | 🚧 | Delete object instance |
@@ -158,7 +162,7 @@ The library is designed with long-running processes, constrained systems, asynch
 | `usp_controller_get_instances()` | 🚧 | Query object instances |
 | `usp_controller_get_supported_protocol()` | 🚧 | Query supported USP protocol |
 
-APIs marked as planned currently return an appropriate `NOT_IMPLEMENTED` status.
+APIs marked as planned currently return `USP_ERR_USP`.
 
 ---
 
@@ -188,7 +192,7 @@ int main(void)
 
     char value[256];
 
-    const int32_t rc =
+    const int rc =
         usp_controller_get(
             controller,
             "Device.DeviceInfo.SerialNumber",
@@ -296,6 +300,101 @@ int main()
 
 ---
 
+## Rust
+
+Rust consumers use the same C ABI through a small `extern "C"` declaration.
+The full working version (baseline GET, subscribe, re-GET loop, no external
+crates) lives in [`examples/rust/`](examples/rust/), which links
+`libuspmtp.so` dynamically.
+
+```rust
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_int, c_void};
+
+// Opaque handle; see UspControllerHandle in libuspmtp.h.
+#[repr(C)]
+struct UspControllerHandle {
+    _private: [u8; 0],
+}
+
+const USP_OK: c_int = 0;
+
+// libuspmtp.so (CMake OUTPUT_NAME "uspmtp").
+// kind = "dylib" forces dynamic linking and fails the build if only a
+// static archive is available.
+#[link(name = "uspmtp", kind = "dylib")]
+extern "C" {
+    fn usp_controller_new(
+        socket_path: *const c_char,
+        app_endpoint_id: *const c_char,
+        agent_endpoint_id: *const c_char,
+        timeout_secs: u64,
+    ) -> *mut UspControllerHandle;
+    fn usp_controller_free(handle: *mut UspControllerHandle);
+    fn usp_controller_get(
+        handle: *mut UspControllerHandle,
+        path: *const c_char,
+        out_value: *mut c_char,
+        out_value_len: usize,
+    ) -> c_int;
+    fn usp_controller_last_error(
+        handle: *const UspControllerHandle,
+        out_error: *mut c_char,
+        out_error_len: usize,
+    ) -> c_int;
+}
+
+fn main() {
+    let socket = CString::new("/var/run/usp/broker_agent_path").unwrap();
+    let app = CString::new("proto::my-rust-app").unwrap();
+    let agent = CString::new("proto::api-gateway").unwrap();
+    let path = CString::new("Device.DeviceInfo.SerialNumber").unwrap();
+
+    // SAFETY: all pointers borrow live CStrings.
+    let controller = unsafe {
+        usp_controller_new(socket.as_ptr(), app.as_ptr(), agent.as_ptr(), 10)
+    };
+    assert!(!controller.is_null());
+
+    let mut value = vec![0 as c_char; 256];
+    // SAFETY: controller is valid; value is 256 writable bytes.
+    let rc = unsafe {
+        usp_controller_get(controller, path.as_ptr(), value.as_mut_ptr(), value.len())
+    };
+
+    if rc == USP_OK {
+        // SAFETY: on success the library NUL-terminates the buffer.
+        let serial = unsafe { CStr::from_ptr(value.as_ptr()) };
+        println!("SerialNumber={}", serial.to_string_lossy());
+    } else {
+        let mut error = vec![0 as c_char; 256];
+        // SAFETY: controller is valid; error is 256 writable bytes.
+        unsafe { usp_controller_last_error(controller, error.as_mut_ptr(), error.len()) };
+        let msg = unsafe { CStr::from_ptr(error.as_ptr()) };
+        eprintln!("USP error ({rc}): {}", msg.to_string_lossy());
+    }
+
+    // SAFETY: the owned handle is freed exactly once.
+    unsafe { usp_controller_free(controller) };
+}
+```
+
+Build against the shared library, then run with Cargo (offline — the
+example has no external crates):
+
+```bash
+cmake -S . -B build-shared \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLIBUSPMTP_BUILD_SHARED=ON
+cmake --build build-shared --parallel
+cmake --install build-shared --prefix /usr/local
+
+LIBUSPMTP_LIB_DIR=/usr/local/lib cargo run --release \
+    --manifest-path examples/rust/Cargo.toml
+```
+
+---
+
 # 🛠️ Build
 
 ## Requirements
@@ -307,13 +406,20 @@ int main()
 - Official Protocol Buffers compiler and C++ runtime
 - A supported platform/compiler combination
 
+### Required for the Rust example only
+
+- Rust toolchain (the example uses only the standard library, so it builds offline)
+- A shared library build (`-DLIBUSPMTP_BUILD_SHARED=ON`, provides `libuspmtp.so`)
+
 ### Supported compilers
 
-| Compiler | Version |
-|---|---|
-| GCC | **PLACEHOLDER** |
-| Clang | **PLACEHOLDER** |
-| MSVC | **PLACEHOLDER** |
+| Compiler | Status |
+|---|:---:|
+| GCC (CI: `ubuntu-latest`) | ✅ |
+| Clang (CI: sanitizer job) | ✅ |
+| MSVC | ❌ Not tested |
+
+> **Legend:** ✅ Built in CI · ❌ Not covered by CI
 
 ---
 
@@ -333,6 +439,12 @@ cmake --build build --parallel
 ## Run tests
 
 ```bash
+cmake -S . -B build \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DLIBUSPMTP_BUILD_TESTS=ON
+
+cmake --build build --parallel
+
 ctest --test-dir build --output-on-failure
 ```
 
@@ -345,7 +457,7 @@ Configure a static build:
 ```bash
 cmake -S . -B build-static \
     -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=OFF
+    -DLIBUSPMTP_BUILD_SHARED=OFF
 ```
 
 Build:
@@ -354,7 +466,7 @@ Build:
 cmake --build build-static --parallel
 ```
 
-The resulting library will be available under the project's configured library output directory.
+The resulting static archive (`libuspmtp.a`) will be available under the project's configured library output directory.
 
 ---
 
@@ -365,7 +477,7 @@ Configure a shared build:
 ```bash
 cmake -S . -B build-shared \
     -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=ON
+    -DLIBUSPMTP_BUILD_SHARED=ON
 ```
 
 Build:
@@ -374,11 +486,15 @@ Build:
 cmake --build build-shared --parallel
 ```
 
+This produces the versioned shared library (`libuspmtp.so.0.1.0` with
+`libuspmtp.so.0` / `libuspmtp.so` symlinks; CMake `OUTPUT_NAME uspmtp`).
+
 ---
 
 # 🧩 CMake Integration
 
-Once installed, applications should be able to consume the library using a normal CMake package:
+Once installed (`cmake --install <build-dir> --prefix <prefix>`), applications
+can consume the library using a normal CMake package:
 
 ```cmake
 find_package(libuspmtp CONFIG REQUIRED)
@@ -390,7 +506,35 @@ target_link_libraries(
 )
 ```
 
-> **TODO:** Replace the target/package names above with the final exported CMake target.
+---
+
+# 💡 Examples
+
+Each example is a standalone application that demonstrates the same flow:
+
+1. `GET` the baseline paths (`Device.LocalAgent.`, `Device.UnixDomainSockets.`,
+   `Device.DeviceInfo.`) and print the returned parameters.
+2. `SUBSCRIBE_AND_GET` on `Device.DeviceInfo.` for ValueChange notifications.
+3. On each notification, re-`GET` the baseline paths and print the update.
+
+| Example | Directory | Linking |
+|---|---|---|
+| C | [`examples/c/`](examples/c/) | Static (`libuspmtp.a`) |
+| C++ | [`examples/cpp/`](examples/cpp/) | Static (`libuspmtp.a`) |
+| Rust (std only, no crates) | [`examples/rust/`](examples/rust/) | Dynamic (`libuspmtp.so`) |
+
+Build one Docker image per example and run all three against the same
+OB-USPA agent over a shared UDS socket:
+
+```bash
+docker compose -f test/compose.yml up --build
+```
+
+Each service prints the fetched baseline values to the console, so the
+output doubles as a live correctness check against the agent's data model
+(e.g. `Device.LocalAgent.EndpointID == "proto::api-gateway"`).
+
+See [`test/compose.yml`](test/compose.yml) for the full setup.
 
 ---
 
@@ -400,30 +544,41 @@ target_link_libraries(
 libuspmtp/
 ├── AGENTS.md
 ├── README.md
-├── LICENSE
 ├── CMakeLists.txt
+│
+├── cmake/
+│   └── libuspmtpConfig.cmake.in
 │
 ├── include/
 │   └── libuspmtp.h
 │
 ├── src/
-│   ├── ...
-│   └── internal/
+│   ├── client.cpp / client.hpp
+│   ├── transport.cpp / transport.hpp
+│   ├── usp_proto.cpp / usp_proto.hpp
+│   └── libuspmtp.cpp
+│
+├── proto/
+│   ├── usp-msg-1-5.proto
+│   └── usp-record-1-5.proto
+│
+├── specification/
 │
 ├── tests/
-│   ├── c/
-│   ├── cpp/
-│   └── ...
+│   ├── test_proto.cpp
+│   ├── test_transport.cpp
+│   └── test_client.cpp
+│
+├── test/
+│   └── compose.yml
 │
 ├── examples/
 │   ├── c/
-│   └── cpp/
+│   ├── cpp/
+│   └── rust/
 │
-├── cmake/
-│   └── ...
-│
-└── docs/
-    └── ...
+└── .github/
+    └── workflows/
 ```
 
 The `include/` directory contains the public API.
@@ -440,7 +595,7 @@ libuspmtp is deliberately split into two layers.
 ┌─────────────────────────────────────────────────────────┐
 │                    Application                          │
 │                                                         │
-│       C application / C++ application / FFI            │
+│         C / C++ / Rust application over C FFI           │
 └───────────────────────────┬─────────────────────────────┘
                             │
                             ▼
@@ -627,7 +782,7 @@ Run the complete test suite with:
 ```bash
 cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Debug \
-    -DBUILD_TESTING=ON
+    -DLIBUSPMTP_BUILD_TESTS=ON
 
 cmake --build build --parallel
 
@@ -656,14 +811,20 @@ The test suite covers:
 # 🧰 Sanitizers
 
 Sanitizer builds are strongly recommended during development.
+There are no dedicated CMake options; pass sanitizer flags through the
+standard variables (this mirrors the CI sanitizer job):
 
-Example configuration:
+Example configuration (ASan + UBSan with Clang):
 
 ```bash
 cmake -S . -B build-asan \
     -DCMAKE_BUILD_TYPE=Debug \
-    -DLIBUSPMTP_ENABLE_ASAN=ON \
-    -DLIBUSPMTP_ENABLE_UBSAN=ON
+    -DLIBUSPMTP_BUILD_TESTS=ON \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+    -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+    -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
 ```
 
 Then:
@@ -671,20 +832,15 @@ Then:
 ```bash
 cmake --build build-asan --parallel
 
+ASAN_OPTIONS=halt_on_error=1:detect_leaks=1 \
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 ctest \
     --test-dir build-asan \
     --output-on-failure
 ```
 
-ThreadSanitizer should be used where supported:
-
-```bash
-cmake -S . -B build-tsan \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DLIBUSPMTP_ENABLE_TSAN=ON
-```
-
-> **TODO:** Replace the option names above with the final CMake configuration.
+ThreadSanitizer should be used where supported (substitute
+`-fsanitize=thread` for the flags above; do not combine TSan with ASan).
 
 ---
 
@@ -743,7 +899,7 @@ Potential integrations include:
 | C++ | Native C ABI | ✅ |
 | Python | CFFI / ctypes / extension | 🚧 |
 | Go | cgo | 🚧 |
-| Rust | C FFI | 🚧 |
+| Rust | C FFI | ✅ |
 | Java | JNI / Panama | 🚧 |
 | C# | P/Invoke | 🚧 |
 
@@ -816,8 +972,6 @@ Before submitting a change:
 
 Please keep pull requests focused and avoid mixing unrelated refactoring with functional changes.
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution workflow.
-
 ---
 
 # 🗺️ Roadmap
@@ -833,6 +987,8 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution workflow.
 - [x] UDS transport
 - [x] Static library
 - [x] Shared library
+- [x] C, C++ and Rust examples (verified live via `test/compose.yml`)
+- [x] ASan + UBSan CI
 
 ### Next
 
@@ -843,9 +999,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution workflow.
 - [ ] GET_INSTANCES
 - [ ] GET_SUPPORTED_PROTOCOL
 - [ ] Expanded transport support
-- [ ] Comprehensive C examples
-- [ ] Comprehensive C++ examples
-- [ ] Sanitizer CI
+- [ ] TSan CI
 - [ ] API/ABI compatibility CI
 - [ ] Package-manager support
 - [ ] API documentation site
@@ -866,11 +1020,12 @@ Production users should pin a known library version and review the release notes
 
 # 📜 License
 
-**PLACEHOLDER**
+**Apache-2.0**
 
-This project is licensed under the **[LICENSE NAME]** license.
-
-See [`LICENSE`](LICENSE) for the complete license text.
+All project source files carry an `SPDX-License-Identifier: Apache-2.0` header.
+The only exceptions are generated files (e.g. `Cargo.lock`), VCS metadata
+(e.g. `.gitignore`), and the vendored upstream inputs under `proto/` and
+`specification/`, which are never modified.
 
 ---
 

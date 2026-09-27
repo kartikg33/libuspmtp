@@ -23,7 +23,7 @@
  *
  * All exported functions:
  *  – Guard against null pointers.
- *  – Catch all C++ exceptions at the boundary (USP_FFI_ERR_PANIC).
+ *  – Catch all C++ exceptions at the boundary (USP_ERR_PANIC).
  *  – Never let exceptions propagate through the C ABI.
  */
 
@@ -61,32 +61,32 @@ struct UspControllerHandle {
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
-/** Catch-all panic boundary — returns USP_FFI_ERR_PANIC on any exception. */
+/** Catch-all panic boundary — returns USP_ERR_PANIC on any exception. */
 static int with_panic_boundary(auto&& f) noexcept {
     try {
         return f();
     } catch (...) {
-        return USP_FFI_ERR_PANIC;
+        return USP_ERR_PANIC;
     }
 }
 
 /** Write value into a caller-supplied buffer. */
 static int write_c_string(const std::string& value,
                            char* out_ptr, size_t out_len) {
-    if (!out_ptr) return USP_FFI_ERR_NULL_POINTER;
-    if (out_len == 0) return USP_FFI_ERR_INVALID_ARGUMENT;
-    if (value.size() + 1 > out_len) return USP_FFI_ERR_BUFFER_TOO_SMALL;
+    if (!out_ptr) return USP_ERR_NULL_POINTER;
+    if (out_len == 0) return USP_ERR_INVALID_ARGUMENT;
+    if (value.size() + 1 > out_len) return USP_ERR_BUFFER_TOO_SMALL;
     std::memcpy(out_ptr, value.data(), value.size());
     out_ptr[value.size()] = '\0';
-    return USP_FFI_OK;
+    return USP_OK;
 }
 
 /** Same, but accepts null out_ptr with out_len==0 (discard result). */
 static int write_optional_c_string(const std::string& value,
                                     char* out_ptr, size_t out_len) {
     if (!out_ptr) {
-        if (out_len == 0) return USP_FFI_OK;
-        return USP_FFI_ERR_NULL_POINTER;
+        if (out_len == 0) return USP_OK;
+        return USP_ERR_NULL_POINTER;
     }
     return write_c_string(value, out_ptr, out_len);
 }
@@ -94,28 +94,28 @@ static int write_optional_c_string(const std::string& value,
 /** Convert an array of C strings to a vector; returns error code. */
 static int cstr_array_to_vec(const char* const* ptrs, size_t count,
                               std::vector<std::string>& out) {
-    if (count == 0) { out.clear(); return USP_FFI_OK; }
-    if (!ptrs) return USP_FFI_ERR_NULL_POINTER;
+    if (count == 0) { out.clear(); return USP_OK; }
+    if (!ptrs) return USP_ERR_NULL_POINTER;
     out.reserve(count);
     for (size_t i = 0; i < count; ++i) {
-        if (!ptrs[i]) return USP_FFI_ERR_NULL_POINTER;
+        if (!ptrs[i]) return USP_ERR_NULL_POINTER;
         out.push_back(ptrs[i]);
     }
-    return USP_FFI_OK;
+    return USP_OK;
 }
 
 /** Convert two parallel arrays to a vector of pairs; returns error code. */
 static int cstr_pairs_to_vec(const char* const* keys, const char* const* vals,
                               size_t count,
                               std::vector<std::pair<std::string,std::string>>& out) {
-    if (count == 0) { out.clear(); return USP_FFI_OK; }
-    if (!keys || !vals) return USP_FFI_ERR_NULL_POINTER;
+    if (count == 0) { out.clear(); return USP_OK; }
+    if (!keys || !vals) return USP_ERR_NULL_POINTER;
     out.reserve(count);
     for (size_t i = 0; i < count; ++i) {
-        if (!keys[i] || !vals[i]) return USP_FFI_ERR_NULL_POINTER;
+        if (!keys[i] || !vals[i]) return USP_ERR_NULL_POINTER;
         out.emplace_back(keys[i], vals[i]);
     }
-    return USP_FFI_OK;
+    return USP_OK;
 }
 
 /* ── Response text formatting ────────────────────────────────────────────── */
@@ -166,16 +166,16 @@ static std::string format_operate_response(const usp::OperateResponse& resp) {
 
 static usp::SubscriptionNotificationType
 notif_type_from_int(int value, int& err_out) {
-    err_out = USP_FFI_OK;
+    err_out = USP_OK;
     switch (value) {
-    case USP_FFI_SUBSCRIPTION_VALUE_CHANGE:
+    case USP_SUBSCRIPTION_VALUE_CHANGE:
         return usp::SubscriptionNotificationType::ValueChange;
-    case USP_FFI_SUBSCRIPTION_OBJECT_CREATION:
+    case USP_SUBSCRIPTION_OBJECT_CREATION:
         return usp::SubscriptionNotificationType::ObjectCreation;
-    case USP_FFI_SUBSCRIPTION_OBJECT_DELETION:
+    case USP_SUBSCRIPTION_OBJECT_DELETION:
         return usp::SubscriptionNotificationType::ObjectDeletion;
     default:
-        err_out = USP_FFI_ERR_INVALID_ARGUMENT;
+        err_out = USP_ERR_INVALID_ARGUMENT;
         return usp::SubscriptionNotificationType::ValueChange;
     }
 }
@@ -216,7 +216,7 @@ int usp_controller_get(UspControllerHandle* handle,
                         char*       out_value,
                         size_t      out_value_len) {
     return with_panic_boundary([&] {
-        if (!handle || !path) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle || !path) return USP_ERR_NULL_POINTER;
 
         auto result = handle->controller.get(path);
 
@@ -233,19 +233,19 @@ int usp_controller_get(UspControllerHandle* handle,
 
             if (!value) {
                 handle->set_last_error("path not found in response: " + std::string(path));
-                return USP_FFI_ERR_NOT_FOUND;
+                return USP_ERR_NOT_FOUND;
             }
 
-            if (int rc = write_c_string(*value, out_value, out_value_len); rc != USP_FFI_OK) {
+            if (int rc = write_c_string(*value, out_value, out_value_len); rc != USP_OK) {
                 handle->set_last_error("output buffer too small or invalid");
                 return rc;
             }
-            return USP_FFI_OK;
+            return USP_OK;
         }
 
         auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
@@ -256,27 +256,27 @@ int usp_controller_get_many(UspControllerHandle* handle,
                              char*                out_result,
                              size_t               out_result_len) {
     return with_panic_boundary([&] {
-        if (!handle) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle) return USP_ERR_NULL_POINTER;
 
         std::vector<std::string> path_vec;
-        if (int rc = cstr_array_to_vec(paths, path_count, path_vec); rc != USP_FFI_OK) return rc;
-        if (path_vec.empty()) return USP_FFI_ERR_INVALID_ARGUMENT;
+        if (int rc = cstr_array_to_vec(paths, path_count, path_vec); rc != USP_OK) return rc;
+        if (path_vec.empty()) return USP_ERR_INVALID_ARGUMENT;
 
         auto result = handle->controller.get_many(path_vec);
 
         if (auto* resp = std::get_if<usp::GetResponse>(&result)) {
             std::string encoded = format_get_response(*resp);
             if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
-                rc != USP_FFI_OK) {
+                rc != USP_OK) {
                 handle->set_last_error("output buffer too small or invalid");
                 return rc;
             }
-            return USP_FFI_OK;
+            return USP_OK;
         }
 
         auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
@@ -285,15 +285,15 @@ int usp_controller_set(UspControllerHandle* handle,
                         const char* path,
                         const char* value) {
     return with_panic_boundary([&] {
-        if (!handle || !path || !value) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle || !path || !value) return USP_ERR_NULL_POINTER;
 
         auto result = handle->controller.set(path, value);
 
-        if (std::holds_alternative<usp::SetResponse>(result)) return USP_FFI_OK;
+        if (std::holds_alternative<usp::SetResponse>(result)) return USP_OK;
 
         auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
@@ -305,27 +305,27 @@ int usp_controller_set_many(UspControllerHandle* handle,
                              char*                out_result,
                              size_t               out_result_len) {
     return with_panic_boundary([&] {
-        if (!handle) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle) return USP_ERR_NULL_POINTER;
 
         std::vector<std::pair<std::string,std::string>> params;
-        if (int rc = cstr_pairs_to_vec(paths, values, param_count, params); rc != USP_FFI_OK) return rc;
-        if (params.empty()) return USP_FFI_ERR_INVALID_ARGUMENT;
+        if (int rc = cstr_pairs_to_vec(paths, values, param_count, params); rc != USP_OK) return rc;
+        if (params.empty()) return USP_ERR_INVALID_ARGUMENT;
 
         auto result = handle->controller.set_many(params);
 
         if (auto* resp = std::get_if<usp::SetResponse>(&result)) {
             std::string encoded = format_set_response(*resp);
             if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
-                rc != USP_FFI_OK) {
+                rc != USP_OK) {
                 handle->set_last_error("output buffer too small or invalid");
                 return rc;
             }
-            return USP_FFI_OK;
+            return USP_OK;
         }
 
         auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
@@ -338,10 +338,10 @@ int usp_controller_operate(UspControllerHandle* handle,
                             char*                out_result,
                             size_t               out_result_len) {
     return with_panic_boundary([&] {
-        if (!handle || !command) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle || !command) return USP_ERR_NULL_POINTER;
 
         std::vector<std::pair<std::string,std::string>> args;
-        if (int rc = cstr_pairs_to_vec(arg_names, arg_values, arg_count, args); rc != USP_FFI_OK)
+        if (int rc = cstr_pairs_to_vec(arg_names, arg_values, arg_count, args); rc != USP_OK)
             return rc;
 
         auto result = handle->controller.operate(command, args);
@@ -349,16 +349,16 @@ int usp_controller_operate(UspControllerHandle* handle,
         if (auto* resp = std::get_if<usp::OperateResponse>(&result)) {
             std::string encoded = format_operate_response(*resp);
             if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
-                rc != USP_FFI_OK) {
+                rc != USP_OK) {
                 handle->set_last_error("output buffer too small or invalid");
                 return rc;
             }
-            return USP_FFI_OK;
+            return USP_OK;
         }
 
         auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
@@ -371,11 +371,11 @@ int usp_controller_subscribe_and_get(UspControllerHandle*   handle,
                                       char*                  out_result,
                                       size_t                 out_result_len) {
     return with_panic_boundary([&] {
-        if (!handle || !path) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle || !path) return USP_ERR_NULL_POINTER;
 
-        int notif_err = USP_FFI_OK;
+        int notif_err = USP_OK;
         auto notif_type = notif_type_from_int(notification_type, notif_err);
-        if (notif_err != USP_FFI_OK) return notif_err;
+        if (notif_err != USP_OK) return notif_err;
 
         UspNotificationCallback cb_copy = callback;
         void* ud_copy = user_data;
@@ -389,16 +389,16 @@ int usp_controller_subscribe_and_get(UspControllerHandle*   handle,
         if (auto* resp = std::get_if<usp::GetResponse>(&result)) {
             std::string encoded = format_get_response(*resp);
             if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
-                rc != USP_FFI_OK) {
+                rc != USP_OK) {
                 handle->set_last_error("output buffer too small or invalid");
                 return rc;
             }
-            return USP_FFI_OK;
+            return USP_OK;
         }
 
         auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
@@ -412,16 +412,16 @@ int usp_controller_subscribe_many_and_get(UspControllerHandle*    handle,
                                            char*                   out_result,
                                            size_t                  out_result_len) {
     return with_panic_boundary([&] {
-        if (!handle) return USP_FFI_ERR_NULL_POINTER;
-        if (subscription_count == 0) return USP_FFI_ERR_INVALID_ARGUMENT;
-        if (!paths || !notification_types) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle) return USP_ERR_NULL_POINTER;
+        if (subscription_count == 0) return USP_ERR_INVALID_ARGUMENT;
+        if (!paths || !notification_types) return USP_ERR_NULL_POINTER;
 
         std::vector<std::pair<std::string, usp::SubscriptionNotificationType>> subs;
         for (size_t i = 0; i < subscription_count; ++i) {
-            if (!paths[i]) return USP_FFI_ERR_NULL_POINTER;
-            int notif_err = USP_FFI_OK;
+            if (!paths[i]) return USP_ERR_NULL_POINTER;
+            int notif_err = USP_OK;
             auto nt = notif_type_from_int(notification_types[i], notif_err);
-            if (notif_err != USP_FFI_OK) return notif_err;
+            if (notif_err != USP_OK) return notif_err;
             subs.emplace_back(paths[i], nt);
         }
 
@@ -437,26 +437,26 @@ int usp_controller_subscribe_many_and_get(UspControllerHandle*    handle,
         if (auto* resp = std::get_if<usp::GetResponse>(&result)) {
             std::string encoded = format_get_response(*resp);
             if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
-                rc != USP_FFI_OK) {
+                rc != USP_OK) {
                 handle->set_last_error("output buffer too small or invalid");
                 return rc;
             }
-            return USP_FFI_OK;
+            return USP_OK;
         }
 
         auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
 int usp_controller_register(UspControllerHandle* handle, const char* obj) {
     return with_panic_boundary([&] {
-        if (!handle || !obj) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle || !obj) return USP_ERR_NULL_POINTER;
         auto err = handle->controller.register_obj(obj);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
@@ -467,63 +467,63 @@ int usp_controller_add(UspControllerHandle* handle,
                         const char* const*   param_values,
                         size_t               param_count) {
     return with_panic_boundary([&] {
-        if (!handle || !obj) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle || !obj) return USP_ERR_NULL_POINTER;
         std::vector<std::pair<std::string,std::string>> params;
         if (int rc = cstr_pairs_to_vec(param_paths, param_values, param_count, params);
-            rc != USP_FFI_OK) return rc;
+            rc != USP_OK) return rc;
         auto err = handle->controller.add(obj, params);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
 int usp_controller_delete(UspControllerHandle* handle, const char* instance) {
     return with_panic_boundary([&] {
-        if (!handle || !instance) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle || !instance) return USP_ERR_NULL_POINTER;
         auto err = handle->controller.delete_instance(instance);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
 int usp_controller_get_supported_dm(UspControllerHandle* handle, const char* obj) {
     return with_panic_boundary([&] {
-        if (!handle || !obj) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle || !obj) return USP_ERR_NULL_POINTER;
         auto err = handle->controller.get_supported_dm(obj);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
 int usp_controller_get_instances(UspControllerHandle* handle, const char* obj) {
     return with_panic_boundary([&] {
-        if (!handle || !obj) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle || !obj) return USP_ERR_NULL_POINTER;
         auto err = handle->controller.get_instances(obj);
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
 int usp_controller_get_supported_protocol(UspControllerHandle* handle) {
     return with_panic_boundary([&] {
-        if (!handle) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle) return USP_ERR_NULL_POINTER;
         auto err = handle->controller.get_supported_protocol();
         handle->set_last_error(err.to_string());
-        return USP_FFI_ERR_USP;
+        return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
 int usp_controller_set_timeout(UspControllerHandle* handle, uint64_t timeout_secs) {
     return with_panic_boundary([&] {
-        if (!handle) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle) return USP_ERR_NULL_POINTER;
         handle->controller.set_timeout(
             std::chrono::seconds(timeout_secs > 0 ? timeout_secs : 10));
-        return USP_FFI_OK;
+        return USP_OK;
     });
 }
 
@@ -537,7 +537,7 @@ int usp_controller_last_error(const UspControllerHandle* handle,
                                char*  out_error,
                                size_t out_error_len) {
     return with_panic_boundary([&] {
-        if (!handle) return USP_FFI_ERR_NULL_POINTER;
+        if (!handle) return USP_ERR_NULL_POINTER;
         auto msg = handle->get_last_error();
         return write_c_string(msg, out_error, out_error_len);
     });

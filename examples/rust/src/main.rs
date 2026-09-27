@@ -57,7 +57,7 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
-use ffi::{UspControllerHandle, USP_FFI_OK, USP_FFI_SUBSCRIPTION_VALUE_CHANGE};
+use ffi::{UspControllerHandle, USP_OK, USP_SUBSCRIPTION_VALUE_CHANGE};
 
 // ── Baseline paths ───────────────────────────────────────────────────────────
 
@@ -246,7 +246,7 @@ impl Controller {
                 buf.len(),
             )
         };
-        if rc == USP_FFI_OK {
+        if rc == USP_OK {
             // SAFETY: on success the library NUL-terminates the buffer.
             Ok(unsafe {
                 CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned()
@@ -265,14 +265,14 @@ impl Controller {
             ffi::usp_controller_subscribe_and_get(
                 self.raw,
                 path.as_ptr(),
-                USP_FFI_SUBSCRIPTION_VALUE_CHANGE,
+                USP_SUBSCRIPTION_VALUE_CHANGE,
                 Some(on_notification),
                 write_fd as *mut c_void,
                 buf.as_mut_ptr(),
                 buf.len(),
             )
         };
-        if rc == USP_FFI_OK {
+        if rc == USP_OK {
             // SAFETY: on success the library NUL-terminates the buffer.
             Ok(unsafe {
                 CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned()

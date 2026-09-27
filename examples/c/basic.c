@@ -206,7 +206,7 @@ int main(int argc, char** argv) {
         char result[65536];
         int rc = usp_controller_get_many(h, kBaselinePaths, kBaselinePathCount,
                                          result, sizeof(result));
-        if (rc == USP_FFI_OK) {
+        if (rc == USP_OK) {
             print_get_result(result);
         } else {
             char err[512];
@@ -227,12 +227,12 @@ int main(int argc, char** argv) {
         int rc = usp_controller_subscribe_and_get(
             h,
             "Device.DeviceInfo.",
-            USP_FFI_SUBSCRIPTION_VALUE_CHANGE,
+            USP_SUBSCRIPTION_VALUE_CHANGE,
             on_notification,
             (void*)(intptr_t)pipe_wr,
             result, sizeof(result));
 
-        if (rc == USP_FFI_OK) {
+        if (rc == USP_OK) {
             printf("Subscription active.  Initial GET result:\n");
             print_get_result(result);
         } else {
@@ -274,7 +274,7 @@ int main(int argc, char** argv) {
         char result[65536];
         int rc = usp_controller_get_many(h, kBaselinePaths, kBaselinePathCount,
                                          result, sizeof(result));
-        if (rc == USP_FFI_OK) {
+        if (rc == USP_OK) {
             print_get_result(result);
         } else {
             char err[512];
