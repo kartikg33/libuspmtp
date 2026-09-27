@@ -50,6 +50,7 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <variant>
 #include <vector>
 
@@ -102,6 +103,16 @@ static void print_get_response(const usp::GetResponse& resp) {
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
 int main(int argc, char** argv) {
+    /*
+     * Flush every insertion to stdout immediately so each line reaches
+     * `docker logs` without delay.  Without this, stdout is fully
+     * buffered when piped (no TTY) and early lines would sit in the
+     * buffer while we block waiting for the agent, making a
+     * healthy-but-waiting container look dead to log-polling checks.
+     * (std::cerr is unbuffered by default.)
+     */
+    std::cout << std::unitbuf;
+
     std::string socket_path       = env_or("USP_SOCKET_PATH",
         (argc > 1) ? argv[1] : "/var/run/usp/broker_agent_path");
     std::string app_endpoint_id   = env_or("USP_APP_ENDPOINT_ID",
@@ -120,15 +131,31 @@ int main(int argc, char** argv) {
     usp::UspController client(socket_path, app_endpoint_id, agent_endpoint_id);
     client.set_timeout(std::chrono::seconds(10));
 
-    /* ── 1. GET baseline paths ─────────────────────────────────────── */
+    /* ── 1. GET baseline paths (retry until the agent is ready) ──── */
     std::cout << "=== GET baseline (LocalAgent, UnixDomainSockets, DeviceInfo) ===\n";
     {
-        auto result = client.get_many(kBaselinePaths);
-        if (auto* resp = std::get_if<usp::GetResponse>(&result)) {
-            print_get_response(*resp);
-        } else {
-            std::cerr << "GET error: "
-                      << std::get<usp::UspError>(result).to_string() << "\n";
+        /*
+         * The agent may still be starting when this container starts, so
+         * retry the baseline GET until it succeeds.  A single early
+         * failure must not park this example forever with no data and no
+         * subscription.  Persistent failure exits non-zero so the
+         * container runtime restarts us instead of idling silently.
+         */
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+        for (;;) {
+            auto result = client.get_many(kBaselinePaths);
+            if (auto* resp = std::get_if<usp::GetResponse>(&result)) {
+                print_get_response(*resp);
+                break;
+            }
+            std::string err = std::get<usp::UspError>(result).to_string();
+            if (std::chrono::steady_clock::now() >= deadline) {
+                std::cerr << "GET failed persistently: " << err << "\n"
+                          << "Agent never became ready; exiting.\n";
+                return 1;
+            }
+            std::cerr << "GET error: " << err << "; retrying...\n";
+            std::this_thread::sleep_for(std::chrono::seconds(2));
         }
     }
 
@@ -139,24 +166,34 @@ int main(int argc, char** argv) {
          * Callback: fired from the worker thread on each incoming
          * notification.  Must not call UspController methods.
          * Increments counter and signals the main thread.
+         * Retried like the baseline GET: the USP session must exist
+         * before the subscription can be registered.
          */
         auto callback = []() {
             g_notify_count.fetch_add(1, std::memory_order_relaxed);
             g_cv.notify_one();
         };
 
-        auto result = client.subscribe_and_get(
-            "Device.DeviceInfo.",
-            usp::SubscriptionNotificationType::ValueChange,
-            callback);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        for (;;) {
+            auto result = client.subscribe_and_get(
+                "Device.DeviceInfo.",
+                usp::SubscriptionNotificationType::ValueChange,
+                callback);
 
-        if (auto* resp = std::get_if<usp::GetResponse>(&result)) {
-            std::cout << "Subscription active.  Initial GET result:\n";
-            print_get_response(*resp);
-        } else {
-            std::cerr << "subscribe_and_get error: "
-                      << std::get<usp::UspError>(result).to_string() << "\n";
-            std::cerr << "Continuing without subscription.\n";
+            if (auto* resp = std::get_if<usp::GetResponse>(&result)) {
+                std::cout << "Subscription active.  Initial GET result:\n";
+                print_get_response(*resp);
+                break;
+            }
+            std::string err = std::get<usp::UspError>(result).to_string();
+            if (std::chrono::steady_clock::now() >= deadline) {
+                std::cerr << "subscribe_and_get failed persistently: " << err << "\n"
+                          << "Exiting.\n";
+                return 1;
+            }
+            std::cerr << "subscribe_and_get error: " << err << "; retrying...\n";
+            std::this_thread::sleep_for(std::chrono::seconds(2));
         }
     }
 
