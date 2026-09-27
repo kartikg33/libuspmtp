@@ -227,7 +227,7 @@ wait_for_non_notify(Transport& transport,
 
 void session_worker(std::stop_token stop_token,
                     Transport transport_in,
-                    std::shared_ptr<UspController::SessionState> state_ptr,
+                    std::weak_ptr<UspController::SessionState> weak_state,
                     std::chrono::seconds timeout,
                     std::string endpoint_id,
                     std::string agent_endpoint_id)
@@ -236,6 +236,16 @@ void session_worker(std::stop_token stop_token,
     std::vector<std::function<void()>> notify_callbacks;
 
     while (!stop_token.stop_requested()) {
+        /* Lock the session for this iteration only.  Holding a permanent
+         * shared_ptr here would keep the SessionState (and its jthread)
+         * alive past the owning UspController; when the worker thread then
+         * tore down the last reference it would destroy the jthread on
+         * itself and self-join (EDEADLK → terminate).  With a weak_ptr the
+         * owner always destroys the session, which requests stop and joins
+         * deterministically from the owning thread. */
+        std::shared_ptr<UspController::SessionState> state_ptr = weak_state.lock();
+        if (!state_ptr) return; /* owner gone */
+
         /* 1. Non-blocking check for a pending command. */
         std::optional<UspController::WorkerCommand> cmd;
         {
@@ -442,7 +452,21 @@ establish_uds_session(Transport& transport,
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 UspController::SessionState::~SessionState() {
-    /* jthread destructor requests stop and joins automatically. */
+    /* The worker must already be stopped and joined by the owning thread
+     * (see shutdown in ~UspController / clear_session).  The jthread
+     * destructor is a no-op safeguard here; it must never observe a
+     * joinable thread owned by the thread running the destructor. */
+}
+
+/* Stop a session worker and join it from the calling (owning) thread.
+ * Must be called with the session owned by the caller, never from the
+ * worker thread itself.  Bounded: the worker wakes from socket I/O within
+ * ~1s and from request waits within the request timeout. */
+static void shutdown_state(const std::shared_ptr<UspController::SessionState>& state) {
+    if (!state) return;
+    state->worker.request_stop();
+    if (state->worker.joinable())
+        state->worker.join();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -462,6 +486,14 @@ UspController::UspController(std::string socket_path,
 
 void UspController::set_timeout(std::chrono::seconds t) {
     timeout_ = t;
+}
+
+UspController::~UspController() {
+    std::lock_guard lk(*session_mutex_);
+    if (session_ && *session_) {
+        shutdown_state(**session_);
+        *session_ = std::nullopt;
+    }
 }
 
 std::chrono::seconds UspController::timeout() const {
@@ -497,16 +529,19 @@ std::shared_ptr<UspController::SessionState> UspController::ensure_session() {
 
     auto state = std::make_shared<SessionState>();
 
-    /* Capture shared_ptr to keep SessionState alive in the worker thread. */
-    auto state_shared = state;
+    /* The worker thread holds only a weak_ptr to the session: it must never
+     * own the SessionState, otherwise the last reference could be released
+     * on the worker thread itself, destroying (and self-joining) the jthread
+     * it is running in. */
+    std::weak_ptr<SessionState> weak_state = state;
     std::string ep = endpoint_id_;
     std::string aep = agent_endpoint_id_;
     std::chrono::seconds to = timeout_;
 
     state->worker = std::jthread(
-        [state_shared, ep, aep, to](std::stop_token token, Transport t) {
+        [weak_state, ep, aep, to](std::stop_token token, Transport t) {
             session_worker(std::move(token), std::move(t),
-                           state_shared, to, ep, aep);
+                           weak_state, to, ep, aep);
         },
         std::move(transport));
 
@@ -516,7 +551,10 @@ std::shared_ptr<UspController::SessionState> UspController::ensure_session() {
 
 void UspController::clear_session() {
     std::lock_guard lk(*session_mutex_);
-    *session_ = std::nullopt;
+    if (session_ && *session_) {
+        shutdown_state(**session_);
+        *session_ = std::nullopt;
+    }
 }
 
 /* ── build_record ───────────────────────────────────────────────────────── */
@@ -549,7 +587,18 @@ UspResult<proto::Record> UspController::round_trip(proto::Record record) {
         }
         state->cmd_cv.notify_one();
 
-        /* Wait for reply. */
+        /* Wait for reply, bounded: if the worker died without fulfilling
+         * the promise (e.g. its connection dropped after the session was
+         * ensured but before it picked up this command), future.get()
+         * would hang forever.  The worker always answers within the
+         * request timeout, so anything beyond that plus a grace margin
+         * means the session is dead: drop it and retry on a fresh one. */
+        if (future.wait_for(timeout_ + std::chrono::seconds(5)) !=
+            std::future_status::ready) {
+            clear_session();
+            if (attempt == 0) continue;
+            return UspError::connection_failed("no response from session worker");
+        }
         auto result = future.get();
 
         if (auto* rec = std::get_if<proto::Record>(&result))
@@ -594,6 +643,13 @@ std::optional<UspError> UspController::do_subscribe(
         }
         state->cmd_cv.notify_one();
 
+        /* Bounded wait, as in round_trip: never hang on a dead worker. */
+        if (future.wait_for(timeout_ + std::chrono::seconds(5)) !=
+            std::future_status::ready) {
+            clear_session();
+            if (attempt == 0) continue;
+            return UspError::connection_failed("no response from session worker");
+        }
         auto result = future.get();
 
         if (!result) return std::nullopt; /* success */
@@ -716,6 +772,188 @@ static UspResult<OperateResponse> parse_operate_response(const proto::Msg& msg) 
         return UspError::agent_rejected(eb->err_code, eb->err_msg);
 
     return UspError::protocol("unexpected body for OPERATE response");
+}
+
+static UspResult<RegisterResponse> parse_register_response(const proto::Msg& msg) {
+    if (!msg.body)
+        return UspError::protocol("empty body in REGISTER response");
+
+    if (auto* resp = std::get_if<proto::Response>(&msg.body->msg_body)) {
+        auto* rr = std::get_if<proto::RegisterResp>(&resp->resp_type);
+        if (!rr) return UspError::protocol("unexpected response type for REGISTER");
+
+        RegisterResponse out;
+        for (auto& path_result : rr->registered_path_results) {
+            if (!path_result.oper_status) {
+                out.errors.push_back({path_result.requested_path, 0,
+                                      "missing operation status"});
+                continue;
+            }
+            std::visit([&](auto&& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, proto::RegisterOperationSuccess>) {
+                    out.registered.push_back({path_result.requested_path,
+                                              v.registered_path});
+                } else if constexpr (std::is_same_v<T, proto::RegisterOperationFailure>) {
+                    out.errors.push_back({path_result.requested_path,
+                                          v.err_code, v.err_msg});
+                }
+            }, path_result.oper_status->oper_status);
+        }
+        return out;
+    }
+
+    if (auto* eb = std::get_if<proto::ErrorBody>(&msg.body->msg_body))
+        return UspError::agent_rejected(eb->err_code, eb->err_msg);
+
+    return UspError::protocol("unexpected body for REGISTER response");
+}
+
+static UspResult<AddResponse> parse_add_response(const proto::Msg& msg) {
+    if (!msg.body)
+        return UspError::protocol("empty body in ADD response");
+
+    if (auto* resp = std::get_if<proto::Response>(&msg.body->msg_body)) {
+        auto* ar = std::get_if<proto::AddResp>(&resp->resp_type);
+        if (!ar) return UspError::protocol("unexpected response type for ADD");
+
+        AddResponse out;
+        for (auto& obj_result : ar->created_obj_results) {
+            if (!obj_result.oper_status) {
+                out.errors.push_back({obj_result.requested_path, 0,
+                                      "missing operation status"});
+                continue;
+            }
+            std::visit([&](auto&& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, proto::AddOperationSuccess>) {
+                    out.created.push_back({obj_result.requested_path,
+                                           v.instantiated_path, v.unique_keys});
+                } else if constexpr (std::is_same_v<T, proto::AddOperationFailure>) {
+                    out.errors.push_back({obj_result.requested_path,
+                                          v.err_code, v.err_msg});
+                }
+            }, obj_result.oper_status->oper_status);
+        }
+        return out;
+    }
+
+    if (auto* eb = std::get_if<proto::ErrorBody>(&msg.body->msg_body))
+        return UspError::agent_rejected(eb->err_code, eb->err_msg);
+
+    return UspError::protocol("unexpected body for ADD response");
+}
+
+static UspResult<DeleteResponse> parse_delete_response(const proto::Msg& msg) {
+    if (!msg.body)
+        return UspError::protocol("empty body in DELETE response");
+
+    if (auto* resp = std::get_if<proto::Response>(&msg.body->msg_body)) {
+        auto* dr = std::get_if<proto::DeleteResp>(&resp->resp_type);
+        if (!dr) return UspError::protocol("unexpected response type for DELETE");
+
+        DeleteResponse out;
+        for (auto& obj_result : dr->deleted_obj_results) {
+            if (!obj_result.oper_status) {
+                out.errors.push_back({obj_result.requested_path, 0,
+                                      "missing operation status"});
+                continue;
+            }
+            std::visit([&](auto&& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, proto::DeleteOperationSuccess>) {
+                    out.deleted.push_back({obj_result.requested_path,
+                                           v.affected_paths});
+                    for (auto& unaffected : v.unaffected_errors) {
+                        out.errors.push_back({unaffected.path,
+                                              unaffected.err_code,
+                                              unaffected.err_msg});
+                    }
+                } else if constexpr (std::is_same_v<T, proto::DeleteOperationFailure>) {
+                    out.errors.push_back({obj_result.requested_path,
+                                          v.err_code, v.err_msg});
+                }
+            }, obj_result.oper_status->oper_status);
+        }
+        return out;
+    }
+
+    if (auto* eb = std::get_if<proto::ErrorBody>(&msg.body->msg_body))
+        return UspError::agent_rejected(eb->err_code, eb->err_msg);
+
+    return UspError::protocol("unexpected body for DELETE response");
+}
+
+static UspResult<GetSupportedDMResponse> parse_gsdm_response(const proto::Msg& msg) {
+    if (!msg.body)
+        return UspError::protocol("empty body in GET_SUPPORTED_DM response");
+
+    if (auto* resp = std::get_if<proto::Response>(&msg.body->msg_body)) {
+        auto* gr = std::get_if<proto::GetSupportedDMResp>(&resp->resp_type);
+        if (!gr) return UspError::protocol("unexpected response type for GET_SUPPORTED_DM");
+
+        GetSupportedDMResponse out;
+        for (auto& result : gr->results) {
+            GetSupportedDMResponse::Result r;
+            r.requested_path = result.requested_path;
+            r.err_code       = result.err_code;
+            r.err_msg        = result.err_msg;
+            r.data_model_uri = result.data_model_uri;
+            r.objects        = result.objects;
+            out.results.push_back(std::move(r));
+        }
+        return out;
+    }
+
+    if (auto* eb = std::get_if<proto::ErrorBody>(&msg.body->msg_body))
+        return UspError::agent_rejected(eb->err_code, eb->err_msg);
+
+    return UspError::protocol("unexpected body for GET_SUPPORTED_DM response");
+}
+
+static UspResult<GetInstancesResponse> parse_get_instances_response(const proto::Msg& msg) {
+    if (!msg.body)
+        return UspError::protocol("empty body in GET_INSTANCES response");
+
+    if (auto* resp = std::get_if<proto::Response>(&msg.body->msg_body)) {
+        auto* gr = std::get_if<proto::GetInstancesResp>(&resp->resp_type);
+        if (!gr) return UspError::protocol("unexpected response type for GET_INSTANCES");
+
+        GetInstancesResponse out;
+        for (auto& result : gr->results) {
+            GetInstancesResponse::Result r;
+            r.requested_path = result.requested_path;
+            r.err_code       = result.err_code;
+            r.err_msg        = result.err_msg;
+            r.instances      = result.instances;
+            out.results.push_back(std::move(r));
+        }
+        return out;
+    }
+
+    if (auto* eb = std::get_if<proto::ErrorBody>(&msg.body->msg_body))
+        return UspError::agent_rejected(eb->err_code, eb->err_msg);
+
+    return UspError::protocol("unexpected body for GET_INSTANCES response");
+}
+
+static UspResult<GetSupportedProtocolResponse> parse_gsp_response(const proto::Msg& msg) {
+    if (!msg.body)
+        return UspError::protocol("empty body in GET_SUPPORTED_PROTOCOL response");
+
+    if (auto* resp = std::get_if<proto::Response>(&msg.body->msg_body)) {
+        auto* gr = std::get_if<proto::GetSupportedProtocolResp>(&resp->resp_type);
+        if (!gr) return UspError::protocol("unexpected response type for GET_SUPPORTED_PROTOCOL");
+
+        GetSupportedProtocolResponse out;
+        out.agent_versions = gr->agent_versions;
+        return out;
+    }
+
+    if (auto* eb = std::get_if<proto::ErrorBody>(&msg.body->msg_body))
+        return UspError::agent_rejected(eb->err_code, eb->err_msg);
+
+    return UspError::protocol("unexpected body for GET_SUPPORTED_PROTOCOL response");
 }
 
 /* Helper: group (full_param_path, value) pairs into UpdateObject entries. */
@@ -883,31 +1121,162 @@ UspResult<GetResponse> UspController::subscribe_many_and_get(
     return get_many(get_paths);
 }
 
-/* ── Not-yet-implemented stubs ───────────────────────────────────────────── */
+/* ── CreateObject grouping helper ────────────────────────────────────────── */
 
-UspError UspController::register_obj(const std::string&) {
-    return UspError::not_implemented("register");
+/* Group (param_name_or_path, value) pairs into a single CreateObject.
+ * Names may be relative ("Enable") or full paths under obj; a full path
+ * is reduced to its trailing parameter name. */
+static proto::CreateObject group_create_params(
+    const std::string& obj,
+    const std::vector<std::pair<std::string,std::string>>& params)
+{
+    proto::CreateObject co;
+    co.obj_path = obj;
+    for (auto& [path, value] : params) {
+        std::string name = path;
+        if (name.rfind(obj, 0) == 0)
+            name = name.substr(obj.size());
+        auto dot = name.rfind('.');
+        if (dot != std::string::npos)
+            name = name.substr(dot + 1);
+        proto::CreateParamSetting s;
+        s.param    = name;
+        s.value    = value;
+        s.required = true;
+        co.param_settings.push_back(std::move(s));
+    }
+    return co;
 }
 
-UspError UspController::add(const std::string&,
-                             const std::vector<std::pair<std::string,std::string>>&) {
-    return UspError::not_implemented("add");
+/* ═══════════════════════════════════════════════════════════════════════════
+ * REGISTER / ADD / DELETE / GET_SUPPORTED_DM / GET_INSTANCES /
+ * GET_SUPPORTED_PROTOCOL implementations
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+UspResult<RegisterResponse> UspController::register_obj(const std::string& obj) {
+    proto::Register reg_msg;
+    reg_msg.allow_partial = false;
+    reg_msg.reg_paths     = {obj};
+
+    proto::Request req;
+    req.req_type = std::move(reg_msg);
+
+    proto::Body body;
+    body.msg_body = std::move(req);
+
+    auto result = round_trip(build_record(proto::MsgType::Register, std::move(body)));
+    if (auto* err = std::get_if<UspError>(&result)) return *err;
+
+    auto msg_var = extract_msg(std::get<proto::Record>(result));
+    if (auto* err = std::get_if<UspError>(&msg_var)) return *err;
+
+    return parse_register_response(std::get<proto::Msg>(msg_var));
 }
 
-UspError UspController::delete_instance(const std::string&) {
-    return UspError::not_implemented("delete");
+UspResult<AddResponse> UspController::add(
+    const std::string& obj,
+    const std::vector<std::pair<std::string,std::string>>& params)
+{
+    proto::Add add_msg;
+    add_msg.allow_partial = false;
+    add_msg.create_objs.push_back(group_create_params(obj, params));
+
+    proto::Request req;
+    req.req_type = std::move(add_msg);
+
+    proto::Body body;
+    body.msg_body = std::move(req);
+
+    auto result = round_trip(build_record(proto::MsgType::Add, std::move(body)));
+    if (auto* err = std::get_if<UspError>(&result)) return *err;
+
+    auto msg_var = extract_msg(std::get<proto::Record>(result));
+    if (auto* err = std::get_if<UspError>(&msg_var)) return *err;
+
+    return parse_add_response(std::get<proto::Msg>(msg_var));
 }
 
-UspError UspController::get_supported_dm(const std::string&) {
-    return UspError::not_implemented("get_supported_dm");
+UspResult<DeleteResponse> UspController::delete_instance(const std::string& instance) {
+    proto::Delete del_msg;
+    del_msg.allow_partial = false;
+    del_msg.obj_paths     = {instance};
+
+    proto::Request req;
+    req.req_type = std::move(del_msg);
+
+    proto::Body body;
+    body.msg_body = std::move(req);
+
+    auto result = round_trip(build_record(proto::MsgType::Delete, std::move(body)));
+    if (auto* err = std::get_if<UspError>(&result)) return *err;
+
+    auto msg_var = extract_msg(std::get<proto::Record>(result));
+    if (auto* err = std::get_if<UspError>(&msg_var)) return *err;
+
+    return parse_delete_response(std::get<proto::Msg>(msg_var));
 }
 
-UspError UspController::get_instances(const std::string&) {
-    return UspError::not_implemented("get_instances");
+UspResult<GetSupportedDMResponse> UspController::get_supported_dm(const std::string& obj) {
+    proto::GetSupportedDM gsdm_msg;
+    gsdm_msg.obj_paths              = {obj};
+    gsdm_msg.first_level_only       = false;
+    gsdm_msg.return_commands        = true;
+    gsdm_msg.return_events          = true;
+    gsdm_msg.return_params          = true;
+    gsdm_msg.return_unique_key_sets = true;
+
+    proto::Request req;
+    req.req_type = std::move(gsdm_msg);
+
+    proto::Body body;
+    body.msg_body = std::move(req);
+
+    auto result = round_trip(build_record(proto::MsgType::GetSupportedDm, std::move(body)));
+    if (auto* err = std::get_if<UspError>(&result)) return *err;
+
+    auto msg_var = extract_msg(std::get<proto::Record>(result));
+    if (auto* err = std::get_if<UspError>(&msg_var)) return *err;
+
+    return parse_gsdm_response(std::get<proto::Msg>(msg_var));
 }
 
-UspError UspController::get_supported_protocol() {
-    return UspError::not_implemented("get_supported_protocol");
+UspResult<GetInstancesResponse> UspController::get_instances(const std::string& obj) {
+    proto::GetInstances gi_msg;
+    gi_msg.obj_paths        = {obj};
+    gi_msg.first_level_only = false;
+
+    proto::Request req;
+    req.req_type = std::move(gi_msg);
+
+    proto::Body body;
+    body.msg_body = std::move(req);
+
+    auto result = round_trip(build_record(proto::MsgType::GetInstances, std::move(body)));
+    if (auto* err = std::get_if<UspError>(&result)) return *err;
+
+    auto msg_var = extract_msg(std::get<proto::Record>(result));
+    if (auto* err = std::get_if<UspError>(&msg_var)) return *err;
+
+    return parse_get_instances_response(std::get<proto::Msg>(msg_var));
+}
+
+UspResult<GetSupportedProtocolResponse> UspController::get_supported_protocol() {
+    proto::GetSupportedProtocol gsp_msg;
+    gsp_msg.controller_versions = "1.5";
+
+    proto::Request req;
+    req.req_type = std::move(gsp_msg);
+
+    proto::Body body;
+    body.msg_body = std::move(req);
+
+    auto result = round_trip(build_record(proto::MsgType::GetSupportedProto, std::move(body)));
+    if (auto* err = std::get_if<UspError>(&result)) return *err;
+
+    auto msg_var = extract_msg(std::get<proto::Record>(result));
+    if (auto* err = std::get_if<UspError>(&msg_var)) return *err;
+
+    return parse_gsp_response(std::get<proto::Msg>(msg_var));
 }
 
 } // namespace usp

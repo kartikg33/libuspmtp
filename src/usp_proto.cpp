@@ -308,6 +308,571 @@ static AddResp from_native(const ::usp::AddResp& in) {
     return out;
 }
 
+static ::usp::Delete to_native(const Delete& in) {
+    ::usp::Delete out;
+    out.set_allow_partial(in.allow_partial);
+    for (const auto& path : in.obj_paths) {
+        out.add_obj_paths(path);
+    }
+    return out;
+}
+
+static DeleteOperationFailure from_native(const ::usp::DeleteResp_DeletedObjectResult_OperationStatus_OperationFailure& in) {
+    return {in.err_code(), in.err_msg()};
+}
+
+static DeleteOperationSuccess from_native(const ::usp::DeleteResp_DeletedObjectResult_OperationStatus_OperationSuccess& in) {
+    DeleteOperationSuccess out;
+    out.affected_paths.assign(in.affected_paths().begin(), in.affected_paths().end());
+    for (const auto& err : in.unaffected_path_errs()) {
+        out.unaffected_errors.push_back({err.unaffected_path(), err.err_code(), err.err_msg()});
+    }
+    return out;
+}
+
+static DeleteOperationStatus from_native(const ::usp::DeleteResp_DeletedObjectResult_OperationStatus& in) {
+    DeleteOperationStatus out;
+    switch (in.oper_status_case()) {
+    case ::usp::DeleteResp_DeletedObjectResult_OperationStatus::kOperFailure:
+        out.oper_status = from_native(in.oper_failure());
+        break;
+    case ::usp::DeleteResp_DeletedObjectResult_OperationStatus::kOperSuccess:
+        out.oper_status = from_native(in.oper_success());
+        break;
+    default:
+        break;
+    }
+    return out;
+}
+
+static DeletedObjectResult from_native(const ::usp::DeleteResp_DeletedObjectResult& in) {
+    DeletedObjectResult out;
+    out.requested_path = in.requested_path();
+    if (in.has_oper_status()) {
+        out.oper_status = from_native(in.oper_status());
+    }
+    return out;
+}
+
+static DeleteResp from_native(const ::usp::DeleteResp& in) {
+    DeleteResp out;
+    for (const auto& result : in.deleted_obj_results()) {
+        out.deleted_obj_results.push_back(from_native(result));
+    }
+    return out;
+}
+
+static ::usp::Register to_native(const Register& in) {
+    ::usp::Register out;
+    out.set_allow_partial(in.allow_partial);
+    for (const auto& path : in.reg_paths) {
+        out.add_reg_paths()->set_path(path);
+    }
+    return out;
+}
+
+static RegisterOperationFailure from_native(const ::usp::RegisterResp_RegisteredPathResult_OperationStatus_OperationFailure& in) {
+    return {in.err_code(), in.err_msg()};
+}
+
+static RegisterOperationSuccess from_native(const ::usp::RegisterResp_RegisteredPathResult_OperationStatus_OperationSuccess& in) {
+    return {in.registered_path()};
+}
+
+static RegisterOperationStatus from_native(const ::usp::RegisterResp_RegisteredPathResult_OperationStatus& in) {
+    RegisterOperationStatus out;
+    switch (in.oper_status_case()) {
+    case ::usp::RegisterResp_RegisteredPathResult_OperationStatus::kOperFailure:
+        out.oper_status = from_native(in.oper_failure());
+        break;
+    case ::usp::RegisterResp_RegisteredPathResult_OperationStatus::kOperSuccess:
+        out.oper_status = from_native(in.oper_success());
+        break;
+    default:
+        break;
+    }
+    return out;
+}
+
+static RegisteredPathResult from_native(const ::usp::RegisterResp_RegisteredPathResult& in) {
+    RegisteredPathResult out;
+    out.requested_path = in.requested_path();
+    if (in.has_oper_status()) {
+        out.oper_status = from_native(in.oper_status());
+    }
+    return out;
+}
+
+static RegisterResp from_native(const ::usp::RegisterResp& in) {
+    RegisterResp out;
+    for (const auto& result : in.registered_path_results()) {
+        out.registered_path_results.push_back(from_native(result));
+    }
+    return out;
+}
+
+static ::usp::GetSupportedDM to_native(const GetSupportedDM& in) {
+    ::usp::GetSupportedDM out;
+    for (const auto& path : in.obj_paths) {
+        out.add_obj_paths(path);
+    }
+    out.set_first_level_only(in.first_level_only);
+    out.set_return_commands(in.return_commands);
+    out.set_return_events(in.return_events);
+    out.set_return_params(in.return_params);
+    out.set_return_unique_key_sets(in.return_unique_key_sets);
+    return out;
+}
+
+static SupportedParamInfo from_native(const ::usp::GetSupportedDMResp_SupportedParamResult& in) {
+    return {in.param_name(),
+            static_cast<int>(in.access()),
+            static_cast<int>(in.value_type()),
+            static_cast<int>(in.value_change())};
+}
+
+static SupportedCommandInfo from_native(const ::usp::GetSupportedDMResp_SupportedCommandResult& in) {
+    SupportedCommandInfo out;
+    out.name = in.command_name();
+    out.input_args.assign(in.input_arg_names().begin(), in.input_arg_names().end());
+    out.output_args.assign(in.output_arg_names().begin(), in.output_arg_names().end());
+    out.command_type = static_cast<int>(in.command_type());
+    return out;
+}
+
+static SupportedEventInfo from_native(const ::usp::GetSupportedDMResp_SupportedEventResult& in) {
+    SupportedEventInfo out;
+    out.name = in.event_name();
+    out.arg_names.assign(in.arg_names().begin(), in.arg_names().end());
+    return out;
+}
+
+static SupportedObjectInfo from_native(const ::usp::GetSupportedDMResp_SupportedObjectResult& in) {
+    SupportedObjectInfo out;
+    out.path = in.supported_obj_path();
+    out.access = static_cast<int>(in.access());
+    out.multi_instance = in.is_multi_instance();
+    for (const auto& cmd : in.supported_commands()) {
+        out.commands.push_back(from_native(cmd));
+    }
+    for (const auto& event : in.supported_events()) {
+        out.events.push_back(from_native(event));
+    }
+    for (const auto& param : in.supported_params()) {
+        out.params.push_back(from_native(param));
+    }
+    out.divergent_paths.assign(in.divergent_paths().begin(), in.divergent_paths().end());
+    for (const auto& key_set : in.unique_key_sets()) {
+        out.unique_key_sets.emplace_back(key_set.key_names().begin(), key_set.key_names().end());
+    }
+    return out;
+}
+
+static SupportedDMResult from_native(const ::usp::GetSupportedDMResp_RequestedObjectResult& in) {
+    SupportedDMResult out;
+    out.requested_path = in.req_obj_path();
+    out.err_code = in.err_code();
+    out.err_msg = in.err_msg();
+    out.data_model_uri = in.data_model_inst_uri();
+    for (const auto& obj : in.supported_objs()) {
+        out.objects.push_back(from_native(obj));
+    }
+    return out;
+}
+
+static GetSupportedDMResp from_native(const ::usp::GetSupportedDMResp& in) {
+    GetSupportedDMResp out;
+    for (const auto& result : in.req_obj_results()) {
+        out.results.push_back(from_native(result));
+    }
+    return out;
+}
+
+static ::usp::GetInstances to_native(const GetInstances& in) {
+    ::usp::GetInstances out;
+    for (const auto& path : in.obj_paths) {
+        out.add_obj_paths(path);
+    }
+    out.set_first_level_only(in.first_level_only);
+    return out;
+}
+
+static InstanceInfo from_native(const ::usp::GetInstancesResp_CurrInstance& in) {
+    InstanceInfo out;
+    out.path = in.instantiated_obj_path();
+    for (const auto& entry : in.unique_keys()) {
+        out.unique_keys.emplace(entry.first, entry.second);
+    }
+    return out;
+}
+
+static InstancesResult from_native(const ::usp::GetInstancesResp_RequestedPathResult& in) {
+    InstancesResult out;
+    out.requested_path = in.requested_path();
+    out.err_code = in.err_code();
+    out.err_msg = in.err_msg();
+    for (const auto& inst : in.curr_insts()) {
+        out.instances.push_back(from_native(inst));
+    }
+    return out;
+}
+
+static GetInstancesResp from_native(const ::usp::GetInstancesResp& in) {
+    GetInstancesResp out;
+    for (const auto& result : in.req_path_results()) {
+        out.results.push_back(from_native(result));
+    }
+    return out;
+}
+
+static ::usp::GetSupportedProtocol to_native(const GetSupportedProtocol& in) {
+    ::usp::GetSupportedProtocol out;
+    out.set_controller_supported_protocol_versions(in.controller_versions);
+    return out;
+}
+
+static GetSupportedProtocolResp from_native(const ::usp::GetSupportedProtocolResp& in) {
+    return {in.agent_supported_protocol_versions()};
+}
+
+static ::usp::DeleteResp_DeletedObjectResult_OperationStatus_OperationFailure to_native(const DeleteOperationFailure& in) {
+    ::usp::DeleteResp_DeletedObjectResult_OperationStatus_OperationFailure out;
+    out.set_err_code(in.err_code);
+    out.set_err_msg(in.err_msg);
+    return out;
+}
+
+static ::usp::DeleteResp_DeletedObjectResult_OperationStatus_OperationSuccess to_native(const DeleteOperationSuccess& in) {
+    ::usp::DeleteResp_DeletedObjectResult_OperationStatus_OperationSuccess out;
+    for (const auto& path : in.affected_paths) {
+        out.add_affected_paths(path);
+    }
+    for (const auto& err : in.unaffected_errors) {
+        auto* e = out.add_unaffected_path_errs();
+        e->set_unaffected_path(err.path);
+        e->set_err_code(err.err_code);
+        e->set_err_msg(err.err_msg);
+    }
+    return out;
+}
+
+static ::usp::DeleteResp_DeletedObjectResult_OperationStatus to_native(const DeleteOperationStatus& in) {
+    ::usp::DeleteResp_DeletedObjectResult_OperationStatus out;
+    std::visit([&](const auto& value) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, DeleteOperationFailure>) {
+            *out.mutable_oper_failure() = to_native(value);
+        } else if constexpr (std::is_same_v<T, DeleteOperationSuccess>) {
+            *out.mutable_oper_success() = to_native(value);
+        }
+    }, in.oper_status);
+    return out;
+}
+
+static ::usp::DeleteResp_DeletedObjectResult to_native(const DeletedObjectResult& in) {
+    ::usp::DeleteResp_DeletedObjectResult out;
+    out.set_requested_path(in.requested_path);
+    if (in.oper_status) {
+        *out.mutable_oper_status() = to_native(*in.oper_status);
+    }
+    return out;
+}
+
+static ::usp::DeleteResp to_native(const DeleteResp& in) {
+    ::usp::DeleteResp out;
+    for (const auto& result : in.deleted_obj_results) {
+        *out.add_deleted_obj_results() = to_native(result);
+    }
+    return out;
+}
+
+static ::usp::RegisterResp_RegisteredPathResult_OperationStatus_OperationFailure to_native(const RegisterOperationFailure& in) {
+    ::usp::RegisterResp_RegisteredPathResult_OperationStatus_OperationFailure out;
+    out.set_err_code(in.err_code);
+    out.set_err_msg(in.err_msg);
+    return out;
+}
+
+static ::usp::RegisterResp_RegisteredPathResult_OperationStatus_OperationSuccess to_native(const RegisterOperationSuccess& in) {
+    ::usp::RegisterResp_RegisteredPathResult_OperationStatus_OperationSuccess out;
+    out.set_registered_path(in.registered_path);
+    return out;
+}
+
+static ::usp::RegisterResp_RegisteredPathResult_OperationStatus to_native(const RegisterOperationStatus& in) {
+    ::usp::RegisterResp_RegisteredPathResult_OperationStatus out;
+    std::visit([&](const auto& value) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, RegisterOperationFailure>) {
+            *out.mutable_oper_failure() = to_native(value);
+        } else if constexpr (std::is_same_v<T, RegisterOperationSuccess>) {
+            *out.mutable_oper_success() = to_native(value);
+        }
+    }, in.oper_status);
+    return out;
+}
+
+static ::usp::RegisterResp_RegisteredPathResult to_native(const RegisteredPathResult& in) {
+    ::usp::RegisterResp_RegisteredPathResult out;
+    out.set_requested_path(in.requested_path);
+    if (in.oper_status) {
+        *out.mutable_oper_status() = to_native(*in.oper_status);
+    }
+    return out;
+}
+
+static ::usp::RegisterResp to_native(const RegisterResp& in) {
+    ::usp::RegisterResp out;
+    for (const auto& result : in.registered_path_results) {
+        *out.add_registered_path_results() = to_native(result);
+    }
+    return out;
+}
+
+static ::usp::GetSupportedDMResp_SupportedParamResult to_native(const SupportedParamInfo& in) {
+    ::usp::GetSupportedDMResp_SupportedParamResult out;
+    out.set_param_name(in.name);
+    out.set_access(static_cast<::usp::GetSupportedDMResp_ParamAccessType>(in.access));
+    out.set_value_type(static_cast<::usp::GetSupportedDMResp_ParamValueType>(in.value_type));
+    out.set_value_change(static_cast<::usp::GetSupportedDMResp_ValueChangeType>(in.value_change));
+    return out;
+}
+
+static ::usp::GetSupportedDMResp_SupportedCommandResult to_native(const SupportedCommandInfo& in) {
+    ::usp::GetSupportedDMResp_SupportedCommandResult out;
+    out.set_command_name(in.name);
+    for (const auto& arg : in.input_args) {
+        out.add_input_arg_names(arg);
+    }
+    for (const auto& arg : in.output_args) {
+        out.add_output_arg_names(arg);
+    }
+    out.set_command_type(static_cast<::usp::GetSupportedDMResp_CmdType>(in.command_type));
+    return out;
+}
+
+static ::usp::GetSupportedDMResp_SupportedEventResult to_native(const SupportedEventInfo& in) {
+    ::usp::GetSupportedDMResp_SupportedEventResult out;
+    out.set_event_name(in.name);
+    for (const auto& arg : in.arg_names) {
+        out.add_arg_names(arg);
+    }
+    return out;
+}
+
+static ::usp::GetSupportedDMResp_SupportedObjectResult to_native(const SupportedObjectInfo& in) {
+    ::usp::GetSupportedDMResp_SupportedObjectResult out;
+    out.set_supported_obj_path(in.path);
+    out.set_access(static_cast<::usp::GetSupportedDMResp_ObjAccessType>(in.access));
+    out.set_is_multi_instance(in.multi_instance);
+    for (const auto& cmd : in.commands) {
+        *out.add_supported_commands() = to_native(cmd);
+    }
+    for (const auto& event : in.events) {
+        *out.add_supported_events() = to_native(event);
+    }
+    for (const auto& param : in.params) {
+        *out.add_supported_params() = to_native(param);
+    }
+    for (const auto& path : in.divergent_paths) {
+        out.add_divergent_paths(path);
+    }
+    for (const auto& key_set : in.unique_key_sets) {
+        auto* ks = out.add_unique_key_sets();
+        for (const auto& key : key_set) {
+            ks->add_key_names(key);
+        }
+    }
+    return out;
+}
+
+static ::usp::GetSupportedDMResp_RequestedObjectResult to_native(const SupportedDMResult& in) {
+    ::usp::GetSupportedDMResp_RequestedObjectResult out;
+    out.set_req_obj_path(in.requested_path);
+    out.set_err_code(in.err_code);
+    out.set_err_msg(in.err_msg);
+    out.set_data_model_inst_uri(in.data_model_uri);
+    for (const auto& obj : in.objects) {
+        *out.add_supported_objs() = to_native(obj);
+    }
+    return out;
+}
+
+static ::usp::GetSupportedDMResp to_native(const GetSupportedDMResp& in) {
+    ::usp::GetSupportedDMResp out;
+    for (const auto& result : in.results) {
+        *out.add_req_obj_results() = to_native(result);
+    }
+    return out;
+}
+
+static ::usp::GetInstancesResp_CurrInstance to_native(const InstanceInfo& in) {
+    ::usp::GetInstancesResp_CurrInstance out;
+    out.set_instantiated_obj_path(in.path);
+    auto* keys = out.mutable_unique_keys();
+    for (const auto& [key, value] : in.unique_keys) {
+        (*keys)[key] = value;
+    }
+    return out;
+}
+
+static ::usp::GetInstancesResp_RequestedPathResult to_native(const InstancesResult& in) {
+    ::usp::GetInstancesResp_RequestedPathResult out;
+    out.set_requested_path(in.requested_path);
+    out.set_err_code(in.err_code);
+    out.set_err_msg(in.err_msg);
+    for (const auto& inst : in.instances) {
+        *out.add_curr_insts() = to_native(inst);
+    }
+    return out;
+}
+
+static ::usp::GetInstancesResp to_native(const GetInstancesResp& in) {
+    ::usp::GetInstancesResp out;
+    for (const auto& result : in.results) {
+        *out.add_req_path_results() = to_native(result);
+    }
+    return out;
+}
+
+static ::usp::GetSupportedProtocolResp to_native(const GetSupportedProtocolResp& in) {
+    ::usp::GetSupportedProtocolResp out;
+    out.set_agent_supported_protocol_versions(in.agent_versions);
+    return out;
+}
+
+static ::usp::Error_ParamError to_native(const ParamError& in) {
+    ::usp::Error_ParamError out;
+    out.set_param_path(in.param_path);
+    out.set_err_code(in.err_code);
+    out.set_err_msg(in.err_msg);
+    return out;
+}
+
+static ::usp::Error to_native(const ErrorBody& in) {
+    ::usp::Error out;
+    out.set_err_code(in.err_code);
+    out.set_err_msg(in.err_msg);
+    for (const auto& err : in.param_errs) {
+        *out.add_param_errs() = to_native(err);
+    }
+    return out;
+}
+
+static ::usp::SetResp_UpdatedObjectResult_OperationStatus_OperationFailure to_native(const OperationFailure& in) {
+    ::usp::SetResp_UpdatedObjectResult_OperationStatus_OperationFailure out;
+    out.set_err_code(in.err_code);
+    out.set_err_msg(in.err_msg);
+    return out;
+}
+
+static ::usp::SetResp_UpdatedObjectResult_OperationStatus to_native(const OperationStatus& in) {
+    ::usp::SetResp_UpdatedObjectResult_OperationStatus out;
+    std::visit([&](const auto& value) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, OperationFailure>) {
+            *out.mutable_oper_failure() = to_native(value);
+        } else if constexpr (std::is_same_v<T, OperationSuccess>) {
+            out.mutable_oper_success();
+        }
+    }, in.oper_status);
+    return out;
+}
+
+static ::usp::SetResp_UpdatedObjectResult to_native(const UpdatedObjectResult& in) {
+    ::usp::SetResp_UpdatedObjectResult out;
+    out.set_requested_path(in.requested_path);
+    if (in.oper_status) {
+        *out.mutable_oper_status() = to_native(*in.oper_status);
+    }
+    return out;
+}
+
+static ::usp::SetResp to_native(const SetResp& in) {
+    ::usp::SetResp out;
+    for (const auto& result : in.updated_obj_results) {
+        *out.add_updated_obj_results() = to_native(result);
+    }
+    return out;
+}
+
+static ::usp::AddResp_CreatedObjectResult_OperationStatus_OperationFailure to_native(const AddOperationFailure& in) {
+    ::usp::AddResp_CreatedObjectResult_OperationStatus_OperationFailure out;
+    out.set_err_code(in.err_code);
+    out.set_err_msg(in.err_msg);
+    return out;
+}
+
+static ::usp::AddResp_CreatedObjectResult_OperationStatus_OperationSuccess to_native(const AddOperationSuccess& in) {
+    ::usp::AddResp_CreatedObjectResult_OperationStatus_OperationSuccess out;
+    out.set_instantiated_path(in.instantiated_path);
+    auto* keys = out.mutable_unique_keys();
+    for (const auto& [key, value] : in.unique_keys) {
+        (*keys)[key] = value;
+    }
+    return out;
+}
+
+static ::usp::AddResp_CreatedObjectResult_OperationStatus to_native(const AddOperationStatus& in) {
+    ::usp::AddResp_CreatedObjectResult_OperationStatus out;
+    std::visit([&](const auto& value) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, AddOperationFailure>) {
+            *out.mutable_oper_failure() = to_native(value);
+        } else if constexpr (std::is_same_v<T, AddOperationSuccess>) {
+            *out.mutable_oper_success() = to_native(value);
+        }
+    }, in.oper_status);
+    return out;
+}
+
+static ::usp::AddResp_CreatedObjectResult to_native(const CreatedObjectResult& in) {
+    ::usp::AddResp_CreatedObjectResult out;
+    out.set_requested_path(in.requested_path);
+    if (in.oper_status) {
+        *out.mutable_oper_status() = to_native(*in.oper_status);
+    }
+    return out;
+}
+
+static ::usp::AddResp to_native(const AddResp& in) {
+    ::usp::AddResp out;
+    for (const auto& result : in.created_obj_results) {
+        *out.add_created_obj_results() = to_native(result);
+    }
+    return out;
+}
+
+static ::usp::OperateResp_OperationResult to_native(const OperationResult& in) {
+    ::usp::OperateResp_OperationResult out;
+    out.set_executed_command(in.executed_command);
+    std::visit([&](const auto& value) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, std::string>) {
+            out.set_req_obj_path(value);
+        } else if constexpr (std::is_same_v<T, OutputArgs>) {
+            auto* args = out.mutable_req_output_args();
+            auto* map = args->mutable_output_args();
+            for (const auto& [key, val] : value.output_args) {
+                (*map)[key] = val;
+            }
+        } else if constexpr (std::is_same_v<T, CommandFailure>) {
+            auto* failure = out.mutable_cmd_failure();
+            failure->set_err_code(value.err_code);
+            failure->set_err_msg(value.err_msg);
+        }
+    }, in.operation_resp);
+    return out;
+}
+
+static ::usp::OperateResp to_native(const OperateResp& in) {
+    ::usp::OperateResp out;
+    for (const auto& result : in.operation_results) {
+        *out.add_operation_results() = to_native(result);
+    }
+    return out;
+}
+
 static ::usp::NotifyResp to_native(const NotifyResp& in) {
     ::usp::NotifyResp out;
     out.set_subscription_id(in.subscription_id);
@@ -387,6 +952,16 @@ static ::usp::Request to_native(const Request& in) {
             *out.mutable_add() = to_native(value);
         } else if constexpr (std::is_same_v<T, Operate>) {
             *out.mutable_operate() = to_native(value);
+        } else if constexpr (std::is_same_v<T, Delete>) {
+            *out.mutable_delete_() = to_native(value);
+        } else if constexpr (std::is_same_v<T, Register>) {
+            *out.mutable_register_() = to_native(value);
+        } else if constexpr (std::is_same_v<T, GetSupportedDM>) {
+            *out.mutable_get_supported_dm() = to_native(value);
+        } else if constexpr (std::is_same_v<T, GetInstances>) {
+            *out.mutable_get_instances() = to_native(value);
+        } else if constexpr (std::is_same_v<T, GetSupportedProtocol>) {
+            *out.mutable_get_supported_protocol() = to_native(value);
         } else if constexpr (std::is_same_v<T, Notify>) {
             *out.mutable_notify() = to_native(value);
         }
@@ -408,6 +983,21 @@ static Request from_native(const ::usp::Request& in) {
         break;
     case ::usp::Request::kOperate:
         out.req_type = Operate{};
+        break;
+    case ::usp::Request::kDelete:
+        out.req_type = Delete{};
+        break;
+    case ::usp::Request::kRegister:
+        out.req_type = Register{};
+        break;
+    case ::usp::Request::kGetSupportedDm:
+        out.req_type = GetSupportedDM{};
+        break;
+    case ::usp::Request::kGetInstances:
+        out.req_type = GetInstances{};
+        break;
+    case ::usp::Request::kGetSupportedProtocol:
+        out.req_type = GetSupportedProtocol{};
         break;
     case ::usp::Request::kNotify:
         out.req_type = from_native(in.notify());
@@ -433,6 +1023,21 @@ static Response from_native(const ::usp::Response& in) {
     case ::usp::Response::kOperateResp:
         out.resp_type = from_native(in.operate_resp());
         break;
+    case ::usp::Response::kDeleteResp:
+        out.resp_type = from_native(in.delete_resp());
+        break;
+    case ::usp::Response::kRegisterResp:
+        out.resp_type = from_native(in.register_resp());
+        break;
+    case ::usp::Response::kGetSupportedDmResp:
+        out.resp_type = from_native(in.get_supported_dm_resp());
+        break;
+    case ::usp::Response::kGetInstancesResp:
+        out.resp_type = from_native(in.get_instances_resp());
+        break;
+    case ::usp::Response::kGetSupportedProtocolResp:
+        out.resp_type = from_native(in.get_supported_protocol_resp());
+        break;
     case ::usp::Response::kNotifyResp:
         out.resp_type = NotifyResp{in.notify_resp().subscription_id()};
         break;
@@ -448,6 +1053,24 @@ static ::usp::Response to_native(const Response& in) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, GetResp>) {
             *out.mutable_get_resp() = to_native(value);
+        } else if constexpr (std::is_same_v<T, SetResp>) {
+            *out.mutable_set_resp() = to_native(value);
+        } else if constexpr (std::is_same_v<T, AddResp>) {
+            *out.mutable_add_resp() = to_native(value);
+        } else if constexpr (std::is_same_v<T, OperateResp>) {
+            *out.mutable_operate_resp() = to_native(value);
+        } else if constexpr (std::is_same_v<T, DeleteResp>) {
+            *out.mutable_delete_resp() = to_native(value);
+        } else if constexpr (std::is_same_v<T, RegisterResp>) {
+            *out.mutable_register_resp() = to_native(value);
+        } else if constexpr (std::is_same_v<T, DeleteResp>) {
+            *out.mutable_delete_resp() = to_native(value);
+        } else if constexpr (std::is_same_v<T, GetSupportedDMResp>) {
+            *out.mutable_get_supported_dm_resp() = to_native(value);
+        } else if constexpr (std::is_same_v<T, GetInstancesResp>) {
+            *out.mutable_get_instances_resp() = to_native(value);
+        } else if constexpr (std::is_same_v<T, GetSupportedProtocolResp>) {
+            *out.mutable_get_supported_protocol_resp() = to_native(value);
         } else if constexpr (std::is_same_v<T, NotifyResp>) {
             *out.mutable_notify_resp() = to_native(value);
         }
@@ -473,6 +1096,8 @@ static ::usp::Body to_native(const Body& in) {
             *out.mutable_request() = to_native(value);
         } else if constexpr (std::is_same_v<T, Response>) {
             *out.mutable_response() = to_native(value);
+        } else if constexpr (std::is_same_v<T, ErrorBody>) {
+            *out.mutable_error() = to_native(value);
         }
     }, in.msg_body);
     return out;

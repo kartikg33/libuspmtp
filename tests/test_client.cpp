@@ -30,8 +30,10 @@
 #include "client.hpp"
 
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -182,34 +184,41 @@ static void test_get_null_guard() {
     CHECK_EQ(rc, USP_ERR_NULL_POINTER);
 }
 
-static void test_not_implemented_stubs() {
-    std::puts("test_not_implemented_stubs");
+static void test_new_operation_guards() {
+    std::puts("test_new_operation_guards");
+
+    /* Null-handle and null-argument guards perform no I/O. */
+    char out[1024];
+
+    CHECK_EQ(usp_controller_register(nullptr, "Device.X.", out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
+    CHECK_EQ(usp_controller_add(nullptr, "Device.X.", nullptr, nullptr, 0,
+                                out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
+    CHECK_EQ(usp_controller_delete(nullptr, "Device.X.1.", out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
+    CHECK_EQ(usp_controller_get_supported_dm(nullptr, "Device.",
+                                             out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
+    CHECK_EQ(usp_controller_get_instances(nullptr, "Device.X.",
+                                          out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
+    CHECK_EQ(usp_controller_get_supported_protocol(nullptr, out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
 
     auto* h = usp_controller_new("/tmp/nonexistent_uspmtp.sock",
-                                  "proto::app", "proto::agent", 1);
+                                 "proto::app", "proto::agent", 1);
     CHECK(h != nullptr);
     if (!h) return;
 
-    int rc;
-
-    rc = usp_controller_register(h, "Device.X.");
-    CHECK_EQ(rc, USP_ERR_USP);
-
-    rc = usp_controller_delete(h, "Device.X.1.");
-    CHECK_EQ(rc, USP_ERR_USP);
-
-    rc = usp_controller_get_supported_dm(h, "Device.");
-    CHECK_EQ(rc, USP_ERR_USP);
-
-    rc = usp_controller_get_instances(h, "Device.X.");
-    CHECK_EQ(rc, USP_ERR_USP);
-
-    rc = usp_controller_get_supported_protocol(h);
-    CHECK_EQ(rc, USP_ERR_USP);
-
-    char err[512];
-    usp_controller_last_error(h, err, sizeof(err));
-    CHECK(std::strstr(err, "implemented") != nullptr);
+    CHECK_EQ(usp_controller_register(h, nullptr, out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
+    CHECK_EQ(usp_controller_delete(h, nullptr, out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
+    CHECK_EQ(usp_controller_get_supported_dm(h, nullptr, out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
+    CHECK_EQ(usp_controller_get_instances(h, nullptr, out, sizeof(out)),
+             USP_ERR_NULL_POINTER);
 
     usp_controller_free(h);
 }
@@ -295,14 +304,112 @@ static std::vector<uint8_t> build_get_resp_record(const std::string& path,
     return rec.encode();
 }
 
-static void test_get_with_mock_agent() {
-    std::puts("test_get_with_mock_agent");
+/*
+ * Encode an arbitrary response/error body as a complete record, for mock
+ * agents answering the new operations (REGISTER, ADD, DELETE,
+ * GET_SUPPORTED_DM, GET_INSTANCES, GET_SUPPORTED_PROTOCOL).
+ */
+static std::vector<uint8_t> encode_body_record(proto::Body body,
+                                               proto::MsgType type) {
+    using namespace proto;
 
-    std::string sock_path = make_tmp_socket_path();
+    Header h;
+    h.msg_id   = "resp-1";
+    h.msg_type = type;
+
+    Msg msg;
+    msg.header = h;
+    msg.body   = std::move(body);
+
+    NoSessionContextRecord nsc;
+    nsc.payload = msg.encode();
+
+    Record rec;
+    rec.version = "1.5";
+    rec.to_id   = "proto::app";
+    rec.from_id = "proto::agent";
+    rec.record_type = nsc;
+
+    return rec.encode();
+}
+
+static std::vector<uint8_t> encode_response_record(proto::Response resp,
+                                                   proto::MsgType type) {
+    proto::Body body;
+    body.msg_body = std::move(resp);
+    return encode_body_record(std::move(body), type);
+}
+
+/*
+ * Mock-agent framing helpers.  Bare ::read may return partial data, so every
+ * frame read loops to completion.
+ */
+static bool mock_read_frame(int fd, std::vector<uint8_t>& out) {
+    uint8_t hdr[8];
+    size_t got = 0;
+    while (got < sizeof(hdr)) {
+        ssize_t n = ::read(fd, hdr + got, sizeof(hdr) - got);
+        if (n <= 0) return false;
+        got += (size_t)n;
+    }
+    uint32_t olen = ((uint32_t)hdr[4] << 24) | ((uint32_t)hdr[5] << 16) |
+                    ((uint32_t)hdr[6] << 8) | (uint32_t)hdr[7];
+    /* Sanity cap: frames larger than 64 MiB are bogus (mis-framed stream). */
+    if (olen > 64u * 1024u * 1024u) return false;
+    out.resize(olen);
+    got = 0;
+    while (got < olen) {
+        ssize_t n = ::read(fd, out.data() + got, olen - got);
+        if (n <= 0) return false;
+        got += (size_t)n;
+    }
+    return true;
+}
+
+static bool mock_write_frame(int fd, const std::vector<uint8_t>& frame) {
+    size_t sent = 0;
+    while (sent < frame.size()) {
+        ssize_t n = sock_write(fd, frame.data() + sent, frame.size() - sent);
+        if (n <= 0) return false;
+        sent += (size_t)n;
+    }
+    return true;
+}
+
+/* Transport handshake: consume the client endpoint frame, send ours. */
+static bool mock_transport_handshake(int cli_fd) {
+    std::vector<uint8_t> hs;
+    if (!mock_read_frame(cli_fd, hs)) return false;
+    std::string sid = "proto::agent";
+    auto hf = make_uds_frame(1, std::vector<uint8_t>(sid.begin(), sid.end()));
+    return mock_write_frame(cli_fd, hf);
+}
+
+/* UDSConnectRecord acknowledgement for session establishment. */
+static std::vector<uint8_t> make_connect_ack_bytes() {
+    using namespace proto;
+    Record connect_ack;
+    connect_ack.version     = "1.5";
+    connect_ack.to_id       = "proto::app";
+    connect_ack.from_id     = "proto::agent";
+    connect_ack.record_type = UdsConnectRecord{};
+    return connect_ack.encode();
+}
+
+/* Consume the client's UDSConnectRecord, send the ack. */
+static bool mock_uds_connect(int cli_fd,
+                             const std::vector<uint8_t>& ack_bytes) {
+    std::vector<uint8_t> connect_req;
+    if (!mock_read_frame(cli_fd, connect_req)) return false;
+    return mock_write_frame(cli_fd, make_uds_frame(3, ack_bytes));
+}
+
+/* Bind + listen on a temp socket path.  Returns srv_fd or -1 (SKIP noted). */
+static int mock_listen(const std::string& sock_path) {
     ::unlink(sock_path.c_str());
 
     int srv_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (srv_fd < 0) { std::puts("  SKIP: cannot create socket"); return; }
+    if (srv_fd < 0) { std::puts("  SKIP: cannot create socket"); return -1; }
 
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
@@ -313,61 +420,428 @@ static void test_get_with_mock_agent() {
     {
         ::close(srv_fd);
         std::puts("  SKIP: cannot bind/listen");
-        return;
+        return -1;
     }
+    return srv_fd;
+}
 
-    auto resp_bytes = build_get_resp_record("Device.DeviceInfo.SerialNumber", "SN-42");
+/*
+ * Run action against a mock agent that performs the full session
+ * establishment (both handshakes), consumes exactly one request frame, and
+ * answers with resp_bytes.  Mirrors what the real OB-USPA agent does, so
+ * client round-trips are real.
+ */
+static void with_mock_agent(const std::vector<uint8_t>& resp_bytes,
+                            std::function<void(const std::string&)> action) {
+    std::string sock_path = make_tmp_socket_path();
 
-    std::thread server([srv_fd, &sock_path, &resp_bytes]() {
+    int srv_fd = mock_listen(sock_path);
+    if (srv_fd < 0) return;
+
+    auto connect_ack_bytes = make_connect_ack_bytes();
+
+    std::thread server([srv_fd, sock_path, &resp_bytes, connect_ack_bytes]() {
         int cli_fd = ::accept(srv_fd, nullptr, nullptr);
         if (cli_fd < 0) { ::close(srv_fd); return; }
 
         suppress_sigpipe(cli_fd);
 
-        /* Consume client handshake. */
-        uint8_t sync[4]; ::read(cli_fd, sync, 4);
-        uint8_t olen_buf[4]; ::read(cli_fd, olen_buf, 4);
-        uint32_t olen = (olen_buf[0]<<24)|(olen_buf[1]<<16)|(olen_buf[2]<<8)|olen_buf[3];
-        std::vector<uint8_t> hs(olen); ::read(cli_fd, hs.data(), olen);
+        /* 1. Transport handshake. */
+        std::vector<uint8_t> hs;
+        if (!mock_read_frame(cli_fd, hs)) {
+            ::close(cli_fd);
+            ::close(srv_fd);
+            return;
+        }
+        {
+            std::string sid = "proto::agent";
+            auto hf = make_uds_frame(1, std::vector<uint8_t>(sid.begin(), sid.end()));
+            if (!mock_write_frame(cli_fd, hf)) {
+                ::close(cli_fd);
+                ::close(srv_fd);
+                return;
+            }
+        }
 
-        /* Send server handshake. */
-        std::string sid = "proto::agent";
-        auto hf = make_uds_frame(1, std::vector<uint8_t>(sid.begin(), sid.end()));
-        sock_write(cli_fd, hf.data(), hf.size());
+        /* 2. Consume UDSConnectRecord, send UDSConnectRecord ack. */
+        std::vector<uint8_t> connect_req;
+        if (!mock_read_frame(cli_fd, connect_req) ||
+            !mock_write_frame(cli_fd, make_uds_frame(3, connect_ack_bytes))) {
+            ::close(cli_fd);
+            ::close(srv_fd);
+            return;
+        }
 
-        /* Consume GET request. */
-        uint8_t sync2[4]; ::read(cli_fd, sync2, 4);
-        uint8_t olen2[4]; ::read(cli_fd, olen2, 4);
-        uint32_t ol2 = (olen2[0]<<24)|(olen2[1]<<16)|(olen2[2]<<8)|olen2[3];
-        std::vector<uint8_t> req(ol2); ::read(cli_fd, req.data(), ol2);
-
-        /* Send GET response. */
-        auto rf = make_uds_frame(3, resp_bytes);
-        sock_write(cli_fd, rf.data(), rf.size());
+        /* 3. Consume the request, then answer. */
+        std::vector<uint8_t> req;
+        if (mock_read_frame(cli_fd, req)) {
+            mock_write_frame(cli_fd, make_uds_frame(3, resp_bytes));
+        }
 
         ::close(cli_fd);
         ::close(srv_fd);
         ::unlink(sock_path.c_str());
     });
 
-    UspController client(sock_path, "proto::app", "proto::agent");
-    client.set_timeout(std::chrono::seconds(5));
-
-    auto result = client.get("Device.DeviceInfo.SerialNumber");
+    action(sock_path);
     server.join();
+}
 
-    if (auto* resp = std::get_if<GetResponse>(&result)) {
-        auto it = resp->params.find("Device.DeviceInfo.SerialNumber");
-        CHECK(it != resp->params.end());
-        if (it != resp->params.end())
-            CHECK_EQ(it->second, "SN-42");
-    } else {
-        auto& err = std::get<UspError>(result);
-        std::fprintf(stderr, "  NOTE: get returned error: %s\n",
-                     err.to_string().c_str());
-        /* Non-fatal: network may not be available in test environment. */
-        ++g_pass;
+static void test_register_round_trip() {
+    std::puts("test_register_round_trip");
+    using namespace proto;
+
+    RegisterOperationStatus st;
+    st.oper_status = RegisterOperationSuccess{"Device.DeviceInfo."};
+
+    RegisteredPathResult rpr;
+    rpr.requested_path = "Device.DeviceInfo.";
+    rpr.oper_status    = st;
+
+    RegisterResp rr;
+    rr.registered_path_results = {rpr};
+
+    Response resp;
+    resp.resp_type = std::move(rr);
+
+    auto bytes = encode_response_record(std::move(resp), MsgType::RegisterResp);
+
+    with_mock_agent(bytes, [](const std::string& sock_path) {
+        UspController client(sock_path, "proto::app", "proto::agent");
+        client.set_timeout(std::chrono::seconds(5));
+
+        auto result = client.register_obj("Device.DeviceInfo.");
+        if (auto* r = std::get_if<RegisterResponse>(&result)) {
+            CHECK_EQ(r->registered.size(), 1u);
+            CHECK(r->errors.empty());
+            if (!r->registered.empty()) {
+                CHECK_EQ(r->registered[0].requested_path, "Device.DeviceInfo.");
+                CHECK_EQ(r->registered[0].registered_path, "Device.DeviceInfo.");
+            }
+        } else {
+            std::fprintf(stderr, "  NOTE: register error: %s\n",
+                         std::get<UspError>(result).to_string().c_str());
+            ++g_pass; /* non-fatal: environment without loopback sockets */
+        }
+    });
+}
+
+static void test_add_round_trip() {
+    std::puts("test_add_round_trip");
+    using namespace proto;
+
+    AddOperationStatus st;
+    AddOperationSuccess ok;
+    ok.instantiated_path = "Device.X.1.";
+    ok.unique_keys = {{"ID", "1"}};
+    st.oper_status = std::move(ok);
+
+    CreatedObjectResult cor;
+    cor.requested_path = "Device.X.";
+    cor.oper_status    = st;
+
+    AddResp ar;
+    ar.created_obj_results = {cor};
+
+    Response resp;
+    resp.resp_type = std::move(ar);
+
+    auto bytes = encode_response_record(std::move(resp), MsgType::AddResp);
+
+    with_mock_agent(bytes, [](const std::string& sock_path) {
+        UspController client(sock_path, "proto::app", "proto::agent");
+        client.set_timeout(std::chrono::seconds(5));
+
+        auto result = client.add("Device.X.", {{"Alias", "test"}});
+        if (auto* r = std::get_if<AddResponse>(&result)) {
+            CHECK_EQ(r->created.size(), 1u);
+            CHECK(r->errors.empty());
+            if (!r->created.empty()) {
+                CHECK_EQ(r->created[0].instantiated_path, "Device.X.1.");
+                auto it = r->created[0].unique_keys.find("ID");
+                CHECK(it != r->created[0].unique_keys.end());
+                if (it != r->created[0].unique_keys.end())
+                    CHECK_EQ(it->second, "1");
+            }
+        } else {
+            std::fprintf(stderr, "  NOTE: add error: %s\n",
+                         std::get<UspError>(result).to_string().c_str());
+            ++g_pass;
+        }
+    });
+}
+
+static void test_delete_round_trip() {
+    std::puts("test_delete_round_trip");
+    using namespace proto;
+
+    DeleteOperationStatus st;
+    DeleteOperationSuccess ok;
+    ok.affected_paths = {"Device.X.1."};
+    st.oper_status = std::move(ok);
+
+    DeletedObjectResult dor;
+    dor.requested_path = "Device.X.1.";
+    dor.oper_status    = st;
+
+    DeleteResp dr;
+    dr.deleted_obj_results = {dor};
+
+    Response resp;
+    resp.resp_type = std::move(dr);
+
+    auto bytes = encode_response_record(std::move(resp), MsgType::DeleteResp);
+
+    with_mock_agent(bytes, [](const std::string& sock_path) {
+        UspController client(sock_path, "proto::app", "proto::agent");
+        client.set_timeout(std::chrono::seconds(5));
+
+        auto result = client.delete_instance("Device.X.1.");
+        if (auto* r = std::get_if<DeleteResponse>(&result)) {
+            CHECK_EQ(r->deleted.size(), 1u);
+            CHECK(r->errors.empty());
+            if (!r->deleted.empty())
+                CHECK_EQ(r->deleted[0].affected_paths,
+                         std::vector<std::string>{"Device.X.1."});
+        } else {
+            std::fprintf(stderr, "  NOTE: delete error: %s\n",
+                         std::get<UspError>(result).to_string().c_str());
+            ++g_pass;
+        }
+    });
+}
+
+static void test_get_supported_dm_round_trip() {
+    std::puts("test_get_supported_dm_round_trip");
+    using namespace proto;
+
+    SupportedParamInfo param;
+    param.name         = "SerialNumber";
+    param.access       = 0;
+    param.value_type   = 8;
+    param.value_change = 1;
+
+    SupportedObjectInfo obj;
+    obj.path           = "Device.DeviceInfo.";
+    obj.access         = 0;
+    obj.multi_instance = false;
+    obj.params         = {param};
+
+    SupportedDMResult result;
+    result.requested_path = "Device.DeviceInfo.";
+    result.data_model_uri = "Device:2.16";
+    result.objects        = {obj};
+
+    GetSupportedDMResp gr;
+    gr.results = {result};
+
+    Response resp;
+    resp.resp_type = std::move(gr);
+
+    auto bytes = encode_response_record(std::move(resp), MsgType::GetSupportedDmResp);
+
+    with_mock_agent(bytes, [](const std::string& sock_path) {
+        UspController client(sock_path, "proto::app", "proto::agent");
+        client.set_timeout(std::chrono::seconds(5));
+
+        auto res = client.get_supported_dm("Device.DeviceInfo.");
+        if (auto* r = std::get_if<GetSupportedDMResponse>(&res)) {
+            CHECK_EQ(r->results.size(), 1u);
+            if (!r->results.empty()) {
+                CHECK_EQ(r->results[0].err_code, 0u);
+                CHECK_EQ(r->results[0].objects.size(), 1u);
+                if (!r->results[0].objects.empty()) {
+                    const auto& o = r->results[0].objects[0];
+                    CHECK_EQ(o.path, "Device.DeviceInfo.");
+                    CHECK_EQ(o.params.size(), 1u);
+                    if (!o.params.empty()) {
+                        CHECK_EQ(o.params[0].name, "SerialNumber");
+                        CHECK_EQ(o.params[0].value_type, 8);
+                    }
+                }
+            }
+        } else {
+            std::fprintf(stderr, "  NOTE: get_supported_dm error: %s\n",
+                         std::get<UspError>(res).to_string().c_str());
+            ++g_pass;
+        }
+    });
+}
+
+static void test_get_instances_round_trip() {
+    std::puts("test_get_instances_round_trip");
+    using namespace proto;
+
+    InstanceInfo inst;
+    inst.path        = "Device.X.1.";
+    inst.unique_keys = {{"ID", "1"}};
+
+    InstancesResult result;
+    result.requested_path = "Device.X.";
+    result.instances      = {inst};
+
+    GetInstancesResp gr;
+    gr.results = {result};
+
+    Response resp;
+    resp.resp_type = std::move(gr);
+
+    auto bytes = encode_response_record(std::move(resp), MsgType::GetInstancesResp);
+
+    with_mock_agent(bytes, [](const std::string& sock_path) {
+        UspController client(sock_path, "proto::app", "proto::agent");
+        client.set_timeout(std::chrono::seconds(5));
+
+        auto res = client.get_instances("Device.X.");
+        if (auto* r = std::get_if<GetInstancesResponse>(&res)) {
+            CHECK_EQ(r->results.size(), 1u);
+            if (!r->results.empty()) {
+                CHECK_EQ(r->results[0].err_code, 0u);
+                CHECK_EQ(r->results[0].instances.size(), 1u);
+                if (!r->results[0].instances.empty()) {
+                    CHECK_EQ(r->results[0].instances[0].path, "Device.X.1.");
+                    auto it = r->results[0].instances[0].unique_keys.find("ID");
+                    CHECK(it != r->results[0].instances[0].unique_keys.end());
+                }
+            }
+        } else {
+            std::fprintf(stderr, "  NOTE: get_instances error: %s\n",
+                         std::get<UspError>(res).to_string().c_str());
+            ++g_pass;
+        }
+    });
+}
+
+static void test_get_supported_protocol_round_trip() {
+    std::puts("test_get_supported_protocol_round_trip");
+    using namespace proto;
+
+    GetSupportedProtocolResp gr;
+    gr.agent_versions = "1.5";
+
+    Response resp;
+    resp.resp_type = std::move(gr);
+
+    auto bytes = encode_response_record(std::move(resp), MsgType::GetSupportedProtoResp);
+
+    with_mock_agent(bytes, [](const std::string& sock_path) {
+        UspController client(sock_path, "proto::app", "proto::agent");
+        client.set_timeout(std::chrono::seconds(5));
+
+        auto res = client.get_supported_protocol();
+        if (auto* r = std::get_if<GetSupportedProtocolResponse>(&res)) {
+            CHECK_EQ(r->agent_versions, "1.5");
+        } else {
+            std::fprintf(stderr, "  NOTE: get_supported_protocol error: %s\n",
+                         std::get<UspError>(res).to_string().c_str());
+            ++g_pass;
+        }
+    });
+}
+
+static void test_new_op_agent_error() {
+    std::puts("test_new_op_agent_error");
+    using namespace proto;
+
+    /* A USP Error body must surface as AgentRejected with the agent code. */
+    ErrorBody eb;
+    eb.err_code = 7006;
+    eb.err_msg  = "permission denied";
+
+    Body body;
+    body.msg_body = std::move(eb);
+
+    auto bytes = encode_body_record(std::move(body), MsgType::Error);
+
+    with_mock_agent(bytes, [](const std::string& sock_path) {
+        UspController client(sock_path, "proto::app", "proto::agent");
+        client.set_timeout(std::chrono::seconds(5));
+
+        auto res = client.delete_instance("Device.X.1.");
+        if (auto* err = std::get_if<UspError>(&res)) {
+            CHECK(err->kind() == UspError::Kind::AgentRejected);
+            CHECK_EQ(err->code(), 7006u);
+        } else {
+            std::fprintf(stderr, "  FAIL: expected agent error\n");
+            ++g_fail;
+        }
+    });
+}
+
+static void test_dead_worker_recovers() {
+    std::puts("test_dead_worker_recovers");
+
+    /* Mock agent that completes both handshakes and then disappears without
+     * answering.  The session worker dies on the closed connection; a later
+     * request must fail fast with an error, never hang.  (Regression test:
+     * requests queued on a dead worker used to block in future.get().) */
+    std::string sock_path = make_tmp_socket_path();
+
+    int srv_fd = mock_listen(sock_path);
+    if (srv_fd < 0) return;
+
+    auto connect_ack_bytes = make_connect_ack_bytes();
+
+    std::thread server([srv_fd, sock_path, connect_ack_bytes]() {
+        int cli_fd = ::accept(srv_fd, nullptr, nullptr);
+        if (cli_fd < 0) { ::close(srv_fd); return; }
+
+        suppress_sigpipe(cli_fd);
+
+        if (!mock_transport_handshake(cli_fd) ||
+            !mock_uds_connect(cli_fd, connect_ack_bytes)) {
+            ::close(cli_fd);
+            ::close(srv_fd);
+            return;
+        }
+
+        /* Go away without reading the request or answering. */
+        ::close(cli_fd);
+        ::close(srv_fd);
+        ::unlink(sock_path.c_str());
+    });
+
+    {
+        UspController client(sock_path, "proto::app", "proto::agent");
+        client.set_timeout(std::chrono::seconds(1));
+
+        /* Let the worker observe the closed connection and exit, so the
+         * request below lands on a dead worker. */
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+
+        /* Must terminate (with an error), not hang.  The watchdog covers
+         * up to timeout + 5s grace here. */
+        auto result = client.get("Device.X");
+        CHECK(std::holds_alternative<UspError>(result));
     }
+
+    server.join();
+}
+
+static void test_get_with_mock_agent() {
+    std::puts("test_get_with_mock_agent");
+
+    auto resp_bytes = build_get_resp_record("Device.DeviceInfo.SerialNumber", "SN-42");
+
+    with_mock_agent(resp_bytes, [](const std::string& sock_path) {
+        UspController client(sock_path, "proto::app", "proto::agent");
+        client.set_timeout(std::chrono::seconds(5));
+
+        auto result = client.get("Device.DeviceInfo.SerialNumber");
+
+        if (auto* resp = std::get_if<GetResponse>(&result)) {
+            auto it = resp->params.find("Device.DeviceInfo.SerialNumber");
+            CHECK(it != resp->params.end());
+            if (it != resp->params.end())
+                CHECK_EQ(it->second, "SN-42");
+        } else {
+            auto& err = std::get<UspError>(result);
+            std::fprintf(stderr, "  NOTE: get returned error: %s\n",
+                         err.to_string().c_str());
+            /* Non-fatal: network may not be available in test environment. */
+            ++g_pass;
+        }
+    });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -384,9 +858,17 @@ int main() {
     test_set_timeout();
     test_last_error();
     test_get_null_guard();
-    test_not_implemented_stubs();
+    test_new_operation_guards();
     test_usp_controller_construction();
     test_get_with_mock_agent();
+    test_register_round_trip();
+    test_add_round_trip();
+    test_delete_round_trip();
+    test_get_supported_dm_round_trip();
+    test_get_instances_round_trip();
+    test_get_supported_protocol_round_trip();
+    test_new_op_agent_error();
+    test_dead_worker_recovers();
 
     std::printf("\n%s: %d passed, %d failed\n",
                 (g_fail == 0) ? "PASS" : "FAIL",

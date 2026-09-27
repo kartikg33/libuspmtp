@@ -164,6 +164,113 @@ static std::string format_operate_response(const usp::OperateResponse& resp) {
     return out;
 }
 
+static void format_path_errors(std::string& out,
+                               const std::vector<usp::PathError>& errors) {
+    for (const auto& e : errors) {
+        out += "ERROR\t" + escape_field(e.path) + "\t" +
+               std::to_string(e.err_code) + "\t" + escape_field(e.err_msg) + "\n";
+    }
+}
+
+static std::string format_register_response(const usp::RegisterResponse& resp) {
+    std::string out;
+    for (const auto& r : resp.registered) {
+        out += "REGISTERED\t" + escape_field(r.requested_path) + "\t" +
+               escape_field(r.registered_path) + "\n";
+    }
+    format_path_errors(out, resp.errors);
+    return out;
+}
+
+static std::string format_add_response(const usp::AddResponse& resp) {
+    std::string out;
+    for (const auto& c : resp.created) {
+        out += "CREATED\t" + escape_field(c.requested_path) + "\t" +
+               escape_field(c.instantiated_path) + "\n";
+        for (auto& [key, value] : c.unique_keys) {
+            out += "KEY\t" + escape_field(c.instantiated_path) + "\t" +
+                   escape_field(key) + "\t" + escape_field(value) + "\n";
+        }
+    }
+    format_path_errors(out, resp.errors);
+    return out;
+}
+
+static std::string format_delete_response(const usp::DeleteResponse& resp) {
+    std::string out;
+    for (const auto& d : resp.deleted) {
+        for (const auto& affected : d.affected_paths) {
+            out += "DELETED\t" + escape_field(d.requested_path) + "\t" +
+                   escape_field(affected) + "\n";
+        }
+    }
+    format_path_errors(out, resp.errors);
+    return out;
+}
+
+static std::string format_gsdm_response(const usp::GetSupportedDMResponse& resp) {
+    std::string out;
+    for (const auto& r : resp.results) {
+        if (r.err_code != 0) {
+            out += "ERROR\t" + escape_field(r.requested_path) + "\t" +
+                   std::to_string(r.err_code) + "\t" + escape_field(r.err_msg) + "\n";
+            continue;
+        }
+        for (const auto& obj : r.objects) {
+            out += "DMOBJ\t" + escape_field(r.requested_path) + "\t" +
+                   escape_field(obj.path) + "\t" +
+                   std::to_string(obj.access) + "\t" +
+                   (obj.multi_instance ? "1" : "0") + "\n";
+            for (const auto& param : obj.params) {
+                out += "DMPARAM\t" + escape_field(obj.path) + "\t" +
+                       escape_field(param.name) + "\t" +
+                       std::to_string(param.access) + "\t" +
+                       std::to_string(param.value_type) + "\t" +
+                       std::to_string(param.value_change) + "\n";
+            }
+            for (const auto& cmd : obj.commands) {
+                out += "DMCMD\t" + escape_field(obj.path) + "\t" +
+                       escape_field(cmd.name) + "\t" +
+                       std::to_string(cmd.command_type) + "\n";
+            }
+            for (const auto& event : obj.events) {
+                out += "DMEVENT\t" + escape_field(obj.path) + "\t" +
+                       escape_field(event.name) + "\n";
+            }
+            for (const auto& key_set : obj.unique_key_sets) {
+                std::string joined;
+                for (size_t i = 0; i < key_set.size(); ++i) {
+                    if (i > 0) joined += ",";
+                    joined += key_set[i];
+                }
+                out += "DMKEYSET\t" + escape_field(obj.path) + "\t" +
+                       escape_field(joined) + "\n";
+            }
+        }
+    }
+    return out;
+}
+
+static std::string format_get_instances_response(const usp::GetInstancesResponse& resp) {
+    std::string out;
+    for (const auto& r : resp.results) {
+        if (r.err_code != 0) {
+            out += "ERROR\t" + escape_field(r.requested_path) + "\t" +
+                   std::to_string(r.err_code) + "\t" + escape_field(r.err_msg) + "\n";
+            continue;
+        }
+        for (const auto& inst : r.instances) {
+            out += "INSTANCE\t" + escape_field(r.requested_path) + "\t" +
+                   escape_field(inst.path) + "\n";
+            for (auto& [key, value] : inst.unique_keys) {
+                out += "KEY\t" + escape_field(inst.path) + "\t" +
+                       escape_field(key) + "\t" + escape_field(value) + "\n";
+            }
+        }
+    }
+    return out;
+}
+
 static usp::SubscriptionNotificationType
 notif_type_from_int(int value, int& err_out) {
     err_out = USP_OK;
@@ -451,10 +558,26 @@ int usp_controller_subscribe_many_and_get(UspControllerHandle*    handle,
 }
 
 LIBUSP_API
-int usp_controller_register(UspControllerHandle* handle, const char* obj) {
+int usp_controller_register(UspControllerHandle* handle,
+                             const char*          obj,
+                             char*                out_result,
+                             size_t               out_result_len) {
     return with_panic_boundary([&] {
         if (!handle || !obj) return USP_ERR_NULL_POINTER;
-        auto err = handle->controller.register_obj(obj);
+
+        auto result = handle->controller.register_obj(obj);
+
+        if (auto* resp = std::get_if<usp::RegisterResponse>(&result)) {
+            std::string encoded = format_register_response(*resp);
+            if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
+                rc != USP_OK) {
+                handle->set_last_error("output buffer too small or invalid");
+                return rc;
+            }
+            return USP_OK;
+        }
+
+        auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
         return USP_ERR_USP;
     });
@@ -465,53 +588,131 @@ int usp_controller_add(UspControllerHandle* handle,
                         const char*          obj,
                         const char* const*   param_paths,
                         const char* const*   param_values,
-                        size_t               param_count) {
+                        size_t               param_count,
+                        char*                out_result,
+                        size_t               out_result_len) {
     return with_panic_boundary([&] {
         if (!handle || !obj) return USP_ERR_NULL_POINTER;
         std::vector<std::pair<std::string,std::string>> params;
         if (int rc = cstr_pairs_to_vec(param_paths, param_values, param_count, params);
             rc != USP_OK) return rc;
-        auto err = handle->controller.add(obj, params);
+
+        auto result = handle->controller.add(obj, params);
+
+        if (auto* resp = std::get_if<usp::AddResponse>(&result)) {
+            std::string encoded = format_add_response(*resp);
+            if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
+                rc != USP_OK) {
+                handle->set_last_error("output buffer too small or invalid");
+                return rc;
+            }
+            return USP_OK;
+        }
+
+        auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
         return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
-int usp_controller_delete(UspControllerHandle* handle, const char* instance) {
+int usp_controller_delete(UspControllerHandle* handle,
+                           const char*          instance,
+                           char*                out_result,
+                           size_t               out_result_len) {
     return with_panic_boundary([&] {
         if (!handle || !instance) return USP_ERR_NULL_POINTER;
-        auto err = handle->controller.delete_instance(instance);
+
+        auto result = handle->controller.delete_instance(instance);
+
+        if (auto* resp = std::get_if<usp::DeleteResponse>(&result)) {
+            std::string encoded = format_delete_response(*resp);
+            if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
+                rc != USP_OK) {
+                handle->set_last_error("output buffer too small or invalid");
+                return rc;
+            }
+            return USP_OK;
+        }
+
+        auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
         return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
-int usp_controller_get_supported_dm(UspControllerHandle* handle, const char* obj) {
+int usp_controller_get_supported_dm(UspControllerHandle* handle,
+                                     const char*          obj,
+                                     char*                out_result,
+                                     size_t               out_result_len) {
     return with_panic_boundary([&] {
         if (!handle || !obj) return USP_ERR_NULL_POINTER;
-        auto err = handle->controller.get_supported_dm(obj);
+
+        auto result = handle->controller.get_supported_dm(obj);
+
+        if (auto* resp = std::get_if<usp::GetSupportedDMResponse>(&result)) {
+            std::string encoded = format_gsdm_response(*resp);
+            if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
+                rc != USP_OK) {
+                handle->set_last_error("output buffer too small or invalid");
+                return rc;
+            }
+            return USP_OK;
+        }
+
+        auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
         return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
-int usp_controller_get_instances(UspControllerHandle* handle, const char* obj) {
+int usp_controller_get_instances(UspControllerHandle* handle,
+                                  const char*          obj,
+                                  char*                out_result,
+                                  size_t               out_result_len) {
     return with_panic_boundary([&] {
         if (!handle || !obj) return USP_ERR_NULL_POINTER;
-        auto err = handle->controller.get_instances(obj);
+
+        auto result = handle->controller.get_instances(obj);
+
+        if (auto* resp = std::get_if<usp::GetInstancesResponse>(&result)) {
+            std::string encoded = format_get_instances_response(*resp);
+            if (int rc = write_optional_c_string(encoded, out_result, out_result_len);
+                rc != USP_OK) {
+                handle->set_last_error("output buffer too small or invalid");
+                return rc;
+            }
+            return USP_OK;
+        }
+
+        auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
         return USP_ERR_USP;
     });
 }
 
 LIBUSP_API
-int usp_controller_get_supported_protocol(UspControllerHandle* handle) {
+int usp_controller_get_supported_protocol(UspControllerHandle* handle,
+                                           char*                out_value,
+                                           size_t               out_value_len) {
     return with_panic_boundary([&] {
         if (!handle) return USP_ERR_NULL_POINTER;
-        auto err = handle->controller.get_supported_protocol();
+
+        auto result = handle->controller.get_supported_protocol();
+
+        if (auto* resp = std::get_if<usp::GetSupportedProtocolResponse>(&result)) {
+            if (int rc = write_optional_c_string(resp->agent_versions,
+                                                 out_value, out_value_len);
+                rc != USP_OK) {
+                handle->set_last_error("output buffer too small or invalid");
+                return rc;
+            }
+            return USP_OK;
+        }
+
+        auto& err = std::get<usp::UspError>(result);
         handle->set_last_error(err.to_string());
         return USP_ERR_USP;
     });
