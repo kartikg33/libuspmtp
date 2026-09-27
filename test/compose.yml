@@ -29,6 +29,11 @@
 #     and links its single binary (C/C++ statically, Rust dynamically
 #     against libuspmtp.so).
 #   * obuspa provides a shared UDS MTP socket for the examples to talk to.
+#   * obuspa carries a healthcheck on the socket file, and the examples
+#     start only once the agent is healthy — so they never fail their
+#     first connect against a socket that does not exist yet.  The
+#     examples additionally retry their initial GET/subscribe until the
+#     agent is ready, as a backstop for any residual startup race.
 #
 # Usage (from this repo's root):
 #   docker compose -f test/compose.yml up --build
@@ -54,6 +59,16 @@ services:
     environment:
       INTERFACE: eth0
     restart: unless-stopped
+    # The daemon needs several seconds to initialise its database and
+    # create the UDS socket.  Examples wait for a healthy agent before
+    # starting (depends_on below) instead of failing their one-shot
+    # connect against a socket that does not exist yet.
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /var/run/obuspa/usp.sock"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+      start_period: 5s
 
   libuspmtp-c-example:
     # Builds libuspmtp (static) and the C example, then runs it.
@@ -67,7 +82,8 @@ services:
       USP_APP_ENDPOINT_ID: proto::libuspmtp-c-example
       USP_AGENT_ENDPOINT_ID: proto::api-gateway
     depends_on:
-      - obuspa
+      obuspa:
+        condition: service_healthy
     restart: unless-stopped
 
   libuspmtp-cpp-example:
@@ -82,7 +98,8 @@ services:
       USP_APP_ENDPOINT_ID: proto::libuspmtp-cpp-example
       USP_AGENT_ENDPOINT_ID: proto::api-gateway
     depends_on:
-      - obuspa
+      obuspa:
+        condition: service_healthy
     restart: unless-stopped
 
   libuspmtp-rust-example:
@@ -99,7 +116,8 @@ services:
       USP_APP_ENDPOINT_ID: proto::libuspmtp-rust-example
       USP_AGENT_ENDPOINT_ID: proto::api-gateway
     depends_on:
-      - obuspa
+      obuspa:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

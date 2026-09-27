@@ -56,6 +56,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::time::{Duration, Instant};
 
 use ffi::{UspControllerHandle, USP_OK, USP_SUBSCRIPTION_VALUE_CHANGE};
 
@@ -344,24 +345,55 @@ fn run() -> Result<(), String> {
     let baseline_refs: Vec<&CStr> =
         baseline.iter().map(|p| p.as_c_str()).collect();
 
-    // ── 1. GET baseline paths ──
+    // ── 1. GET baseline paths (retry until the agent is ready) ──
+    //
+    // The agent may still be starting when this container starts, so
+    // retry the baseline GET until it succeeds.  A single early failure
+    // must not park this example forever with no data and no
+    // subscription.  Persistent failure returns Err so the container
+    // exits non-zero and the runtime restarts us instead of idling
+    // silently.  (println! flushes per line, so progress is visible in
+    // `docker logs` immediately.)
     println!("=== GET baseline (LocalAgent, UnixDomainSockets, DeviceInfo) ===");
-    match controller.get_many(&baseline_refs) {
-        Ok(result) => print_get_result(&result),
-        Err(e) => eprintln!("GET failed: {e}"),
+    let get_deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        match controller.get_many(&baseline_refs) {
+            Ok(result) => {
+                print_get_result(&result);
+                break;
+            }
+            Err(e) => {
+                if Instant::now() >= get_deadline {
+                    return Err(format!(
+                        "GET failed persistently: {e}; agent never became ready"
+                    ));
+                }
+                eprintln!("GET failed: {e}; retrying...");
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        }
     }
 
     // ── 2. Subscribe to Device.DeviceInfo. for ValueChange ──
+    // Retried like the baseline GET: the USP session must exist before
+    // the subscription can be registered.
     println!("\n=== Subscribing to Device.DeviceInfo. (ValueChange) ===");
     let c_subscribe = to_cstr("subscribe path", SUBSCRIBE_PATH)?;
-    match controller.subscribe_and_get(&c_subscribe, pipe.wr) {
-        Ok(result) => {
-            println!("Subscription active.  Initial GET result:");
-            print_get_result(&result);
-        }
-        Err(e) => {
-            eprintln!("subscribe_and_get failed: {e}");
-            eprintln!("Continuing without subscription.");
+    let sub_deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match controller.subscribe_and_get(&c_subscribe, pipe.wr) {
+            Ok(result) => {
+                println!("Subscription active.  Initial GET result:");
+                print_get_result(&result);
+                break;
+            }
+            Err(e) => {
+                if Instant::now() >= sub_deadline {
+                    return Err(format!("subscribe_and_get failed persistently: {e}"));
+                }
+                eprintln!("subscribe_and_get failed: {e}; retrying...");
+                std::thread::sleep(Duration::from_secs(2));
+            }
         }
     }
 
