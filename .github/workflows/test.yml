@@ -15,7 +15,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-name: E2E Mock Test
+name: E2E Mock Test (Docker Compose)
 
 # Proves, on every PR, that the C, C++ and Rust examples build and establish
 # live USP MTP sessions against the OB-USPA agent:
