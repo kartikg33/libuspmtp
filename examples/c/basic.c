@@ -21,9 +21,11 @@
  *
  * C example demonstrating the libuspmtp C API:
  *
- *   1. GET Device.DeviceInfo. and print all returned parameters.
+ *   1. GET the baseline paths (Device.LocalAgent., Device.UnixDomainSockets.,
+ *      Device.DeviceInfo.) and print all returned parameters.  These prove we
+ *      are fetching real values from the usp-agent-app data model.
  *   2. Subscribe to Device.DeviceInfo. for ValueChange notifications.
- *   3. On each notification, re-GET Device.DeviceInfo. and print the
+ *   3. On each notification, re-GET the baseline paths and print the
  *      updated parameter values.
  *
  * The notification callback is invoked from the library's internal worker
@@ -57,7 +59,23 @@ static int pipe_wr = -1;
 /* Set to 1 by the SIGINT/SIGTERM handler to request a clean exit. */
 static volatile int g_stop = 0;
 
-/* ── Helpers ───────────────────────────────────────────────────────────── */
+/* ── Baseline paths ──────────────────────────────────────────────────────── */
+
+/*
+ * Baseline data used to prove we are fetching real values from the
+ * usp-agent-app data model (and not mock/dummy data).  Cross-check the
+ * printed values against the agent's factory-reset database:
+ *   Device.LocalAgent.EndpointID                  == "proto::api-gateway"
+ *   Device.UnixDomainSockets.UnixDomainSocket.1.* == Alias/Mode/Path below
+ *   Device.DeviceInfo.*                           == agent DeviceInfo values
+ */
+static const char* kBaselinePaths[] = {
+    "Device.LocalAgent.",
+    "Device.UnixDomainSockets.",
+    "Device.DeviceInfo.",
+};
+static const size_t kBaselinePathCount =
+    sizeof(kBaselinePaths) / sizeof(kBaselinePaths[0]);
 
 /* Return env var if set and non-empty, otherwise fallback. */
 static const char* env_or(const char* var, const char* fallback) {
@@ -182,12 +200,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    /* ── 1. GET Device.DeviceInfo. ───────────────────────────────────── */
-    printf("=== GET Device.DeviceInfo. ===\n");
+    /* ── 1. GET baseline paths ───────────────────────────────────────── */
+    printf("=== GET baseline (LocalAgent, UnixDomainSockets, DeviceInfo) ===\n");
     {
-        const char* paths[] = { "Device.DeviceInfo." };
         char result[65536];
-        int rc = usp_controller_get_many(h, paths, 1, result, sizeof(result));
+        int rc = usp_controller_get_many(h, kBaselinePaths, kBaselinePathCount,
+                                         result, sizeof(result));
         if (rc == USP_FFI_OK) {
             print_get_result(result);
         } else {
@@ -251,11 +269,11 @@ int main(int argc, char** argv) {
 
         if (g_stop) break;
 
-        /* ── 3a. Re-GET Device.DeviceInfo. and print updated values ── */
-        printf("=== Notification received — re-GET Device.DeviceInfo. ===\n");
-        const char* paths[] = { "Device.DeviceInfo." };
+        /* ── 3a. Re-GET baseline paths and print updated values ─────── */
+        printf("=== Notification received — re-GET baseline ===\n");
         char result[65536];
-        int rc = usp_controller_get_many(h, paths, 1, result, sizeof(result));
+        int rc = usp_controller_get_many(h, kBaselinePaths, kBaselinePathCount,
+                                         result, sizeof(result));
         if (rc == USP_FFI_OK) {
             print_get_result(result);
         } else {

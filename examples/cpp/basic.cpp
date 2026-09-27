@@ -21,9 +21,11 @@
  *
  * C++ example demonstrating the UspController C++ API:
  *
- *   1. GET Device.DeviceInfo. and print all returned parameters.
+ *   1. GET the baseline paths (Device.LocalAgent., Device.UnixDomainSockets.,
+ *      Device.DeviceInfo.) and print all returned parameters.  These prove we
+ *      are fetching real values from the usp-agent-app data model.
  *   2. Subscribe to Device.DeviceInfo. for ValueChange notifications.
- *   3. On each notification, re-GET Device.DeviceInfo. and print the
+ *   3. On each notification, re-GET the baseline paths and print the
  *      updated parameter values.
  *
  * The subscription callback fires from the library's internal worker thread.
@@ -49,6 +51,7 @@
 #include <mutex>
 #include <string>
 #include <variant>
+#include <vector>
 
 /* ── Signal handling ──────────────────────────────────────────────────── */
 
@@ -62,7 +65,21 @@ static void handle_signal(int /*sig*/) {
     g_cv.notify_all();
 }
 
-/* ── Helpers ──────────────────────────────────────────────────────────── */
+/* ── Baseline paths ───────────────────────────────────────────────────── */
+
+/*
+ * Baseline data used to prove we are fetching real values from the
+ * usp-agent-app data model (and not mock/dummy data).  Cross-check the
+ * printed values against the agent's factory-reset database:
+ *   Device.LocalAgent.EndpointID                  == "proto::api-gateway"
+ *   Device.UnixDomainSockets.UnixDomainSocket.1.* == Alias/Mode/Path below
+ *   Device.DeviceInfo.*                           == agent DeviceInfo values
+ */
+static const std::vector<std::string> kBaselinePaths = {
+    "Device.LocalAgent.",
+    "Device.UnixDomainSockets.",
+    "Device.DeviceInfo.",
+};
 
 static std::string env_or(const char* var, std::string fallback) {
     const char* v = std::getenv(var);
@@ -103,10 +120,10 @@ int main(int argc, char** argv) {
     usp::UspController client(socket_path, app_endpoint_id, agent_endpoint_id);
     client.set_timeout(std::chrono::seconds(10));
 
-    /* ── 1. GET Device.DeviceInfo. ──────────────────────────────────── */
-    std::cout << "=== GET Device.DeviceInfo. ===\n";
+    /* ── 1. GET baseline paths ─────────────────────────────────────── */
+    std::cout << "=== GET baseline (LocalAgent, UnixDomainSockets, DeviceInfo) ===\n";
     {
-        auto result = client.get_many({"Device.DeviceInfo."});
+        auto result = client.get_many(kBaselinePaths);
         if (auto* resp = std::get_if<usp::GetResponse>(&result)) {
             print_get_response(*resp);
         } else {
@@ -162,9 +179,9 @@ int main(int argc, char** argv) {
         last_seen = current;
         lock.unlock();
 
-        /* ── 3a. Re-GET Device.DeviceInfo. and print updated values ── */
-        std::cout << "=== Notification received — re-GET Device.DeviceInfo. ===\n";
-        auto result = client.get_many({"Device.DeviceInfo."});
+        /* ── 3a. Re-GET baseline paths and print updated values ───── */
+        std::cout << "=== Notification received — re-GET baseline ===\n";
+        auto result = client.get_many(kBaselinePaths);
         if (auto* resp = std::get_if<usp::GetResponse>(&result)) {
             print_get_response(*resp);
         } else {
