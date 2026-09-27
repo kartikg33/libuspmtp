@@ -994,6 +994,7 @@ do not open a public issue.
 - [x] Shared library
 - [x] C, C++ and Rust examples (verified live via `test/compose.yml`)
 - [x] ASan + UBSan CI
+- [x] Compose test workflow (examples build and hold live USP sessions per PR)
 
 ### Next
 
