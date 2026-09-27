@@ -10,7 +10,7 @@
 [![C API](https://img.shields.io/badge/API-C%20ABI-informational.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#-license)
 [![Build](https://github.com/kartikg33/libuspmtp/actions/workflows/build.yml/badge.svg)](https://github.com/kartikg33/libuspmtp/actions/workflows/build.yml)
-[![Tests](https://img.shields.io/github/actions/workflow/status/kartikg33/libuspmtp/test.yml?label=tests)](https://github.com/kartikg33/libuspmtp/actions/workflows/test.yml)
+[![Tests](https://github.com/kartikg33/libuspmtp/actions/workflows/test.yml/badge.svg)](https://github.com/kartikg33/libuspmtp/actions/workflows/test.yml)
 
 <br />
 
