@@ -8,13 +8,13 @@
 
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](#)
 [![C API](https://img.shields.io/badge/API-C%20ABI-informational.svg)](#)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#-license)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#)
 [![Build](https://github.com/kartikg33/libuspmtp/actions/workflows/build.yml/badge.svg)](https://github.com/kartikg33/libuspmtp/actions/workflows/build.yml)
 [![Tests](https://github.com/kartikg33/libuspmtp/actions/workflows/test.yml/badge.svg)](https://github.com/kartikg33/libuspmtp/actions/workflows/test.yml)
 
 <br />
 
-**C++20 implementation · C ABI · Static & Shared Libraries · USP / TR-369**
+**C++20 implementation · C ABI · Static & Shared Libraries · USP / TR-369 · MTP / Unix Domain Sockets**
 
 <br />
 
@@ -32,7 +32,7 @@
 
 ## ✨ Overview
 
-**libuspmtp** is a modern C++20 library for communicating with **USP Agents** implementing the Broadband Forum **USP (TR-369)** protocol.
+**libuspmtp** is a modern C++20 library for communicating with **USP Agents** implementing the Broadband Forum **USP (TR-369) MTP** protocol.
 
 It provides a clean controller API for operations such as:
 
@@ -50,9 +50,9 @@ It provides a clean controller API for operations such as:
 
 The library is designed around a simple principle:
 
-> **Modern C++20 internally. Stable C ABI externally.**
+> **Modern C++20 internally. Stable C ABI externally. Maximum compatibility with your code.**
 
-The implementation uses modern C++ ownership, RAII, concurrency primitives, and asynchronous facilities while exposing a conservative C-compatible API that can be consumed by C, modern C++, and legacy C/C++ applications.
+The implementation uses modern C++ ownership, RAII, concurrency primitives, and asynchronous facilities while exposing a conservative C-compatible API that can be consumed by C, modern C++, legacy C/C++ applications, and other FFI-supported languages such as Rust.
 
 ---
 
@@ -79,26 +79,16 @@ Built using modern C++20 facilities with a focus on:
 The public API is exposed through a C-compatible header.
 
 That means the same library can be consumed by:
-
-```text
-C
-C++20
-Legacy C++
-Other languages with C FFI support
-```
+- C
+- C++20
+- Legacy C++
+- Other languages with C FFI support, e.g. Rust
 
 without exposing C++ implementation details.
 
 ### Static or shared
 
-Build and distribute the library as either:
-
-```text
-Static library
-Shared library
-```
-
-depending on the needs of your application.
+Build and distribute the library as either a static library or a shared (dynamic) library depending on the needs of your application.
 
 ### Designed for embedded and systems software
 
@@ -991,11 +981,10 @@ Potential integrations include:
 |---|---|:---:|
 | C | Native C ABI | ✅ |
 | C++ | Native C ABI | ✅ |
+| Rust | C FFI | ✅ |
 | Python | CFFI / ctypes / extension | 🚧 |
 | Go | cgo | 🚧 |
-| Rust | C FFI | ✅ |
 | Java | JNI / Panama | 🚧 |
-| C# | P/Invoke | 🚧 |
 
 Language-specific bindings should remain thin wrappers around the stable C ABI.
 
