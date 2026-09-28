@@ -180,11 +180,271 @@ static void test_notify_usp_1_5_tags() {
     }
 }
 
+static void test_new_request_roundtrips() {
+    std::puts("test_new_request_roundtrips");
+
+    /* Each new request type must survive Msg encode → decode as its own
+     * variant member (decode maps them to empty structs, mirroring the
+     * existing Set/Add handling). */
+    auto check_request = [](Request req, MsgType type) {
+        Body body;
+        body.msg_body = std::move(req);
+        Msg msg;
+        msg.header = Header{"50", type};
+        msg.body = std::move(body);
+        auto decoded = Msg::decode(msg.encode());
+        CHECK(decoded.has_value());
+        if (!decoded.has_value()) return;
+        auto* r = std::get_if<Request>(&decoded->body->msg_body);
+        CHECK(r != nullptr);
+        if (r) CHECK(r->req_type.index() != 0);
+    };
+
+    {
+        Delete d;
+        d.obj_paths = {"Device.X.1."};
+        Request req;
+        req.req_type = d;
+        check_request(std::move(req), MsgType::Delete);
+    }
+    {
+        Register r;
+        r.reg_paths = {"Device.X."};
+        Request req;
+        req.req_type = r;
+        check_request(std::move(req), MsgType::Register);
+    }
+    {
+        GetSupportedDM g;
+        g.obj_paths = {"Device."};
+        Request req;
+        req.req_type = g;
+        check_request(std::move(req), MsgType::GetSupportedDm);
+    }
+    {
+        GetInstances g;
+        g.obj_paths = {"Device.X."};
+        Request req;
+        req.req_type = g;
+        check_request(std::move(req), MsgType::GetInstances);
+    }
+    {
+        GetSupportedProtocol g;
+        g.controller_versions = "1.5";
+        Request req;
+        req.req_type = std::move(g);
+        check_request(std::move(req), MsgType::GetSupportedProto);
+    }
+}
+
+static void test_new_response_roundtrips() {
+    std::puts("test_new_response_roundtrips");
+
+    /* DeleteResp with an unaffected-path error. */
+    {
+        DeleteOperationStatus st;
+        DeleteOperationSuccess ok;
+        ok.affected_paths = {"Device.X.1."};
+        ok.unaffected_errors = {{"Device.X.2.", 7026, "nope"}};
+        st.oper_status = std::move(ok);
+
+        DeletedObjectResult dor;
+        dor.requested_path = "Device.X.1.";
+        dor.oper_status = st;
+
+        DeleteResp dr;
+        dr.deleted_obj_results = {dor};
+
+        Response resp;
+        resp.resp_type = std::move(dr);
+
+        Body body;
+        body.msg_body = std::move(resp);
+
+        Msg msg;
+        msg.header = Header{"52", MsgType::DeleteResp};
+        msg.body = std::move(body);
+
+        auto decoded = Msg::decode(msg.encode());
+        CHECK(decoded.has_value());
+        auto* r = std::get_if<Response>(&decoded->body->msg_body);
+        auto* d = r ? std::get_if<DeleteResp>(&r->resp_type) : nullptr;
+        CHECK(d != nullptr);
+        if (d && d->deleted_obj_results.size() == 1) {
+            const auto& res = d->deleted_obj_results[0];
+            CHECK(res.oper_status.has_value());
+            if (res.oper_status) {
+                auto* ok2 = std::get_if<DeleteOperationSuccess>(
+                    &res.oper_status->oper_status);
+                CHECK(ok2 != nullptr);
+                if (ok2) {
+                    CHECK_EQ(ok2->affected_paths,
+                             std::vector<std::string>{"Device.X.1."});
+                    CHECK_EQ(ok2->unaffected_errors.size(), 1u);
+                    if (!ok2->unaffected_errors.empty())
+                        CHECK_EQ(ok2->unaffected_errors[0].err_code, 7026u);
+                }
+            }
+        }
+    }
+
+    /* RegisterResp success. */
+    {
+        RegisterOperationStatus st;
+        st.oper_status = RegisterOperationSuccess{"Device.Y."};
+
+        RegisteredPathResult rpr;
+        rpr.requested_path = "Device.Y.";
+        rpr.oper_status = st;
+
+        RegisterResp rr;
+        rr.registered_path_results = {rpr};
+
+        Response resp;
+        resp.resp_type = std::move(rr);
+
+        Body body;
+        body.msg_body = std::move(resp);
+
+        Msg msg;
+        msg.header = Header{"53", MsgType::RegisterResp};
+        msg.body = std::move(body);
+
+        auto decoded = Msg::decode(msg.encode());
+        CHECK(decoded.has_value());
+        auto* r = std::get_if<Response>(&decoded->body->msg_body);
+        auto* rr2 = r ? std::get_if<RegisterResp>(&r->resp_type) : nullptr;
+        CHECK(rr2 != nullptr);
+        if (rr2 && rr2->registered_path_results.size() == 1) {
+            const auto& res = rr2->registered_path_results[0];
+            CHECK(res.oper_status.has_value());
+            if (res.oper_status) {
+                auto* ok = std::get_if<RegisterOperationSuccess>(
+                    &res.oper_status->oper_status);
+                CHECK(ok != nullptr);
+                if (ok) CHECK_EQ(ok->registered_path, "Device.Y.");
+            }
+        }
+    }
+
+    /* GetSupportedDMResp with params/commands/events/key sets. */
+    {
+        SupportedParamInfo param{"SerialNumber", 0, 8, 1};
+        SupportedCommandInfo cmd{"Reset", {"Arg"}, {"Out"}, 1};
+        SupportedEventInfo event{"Boot", {"Cause"}};
+
+        SupportedObjectInfo obj;
+        obj.path = "Device.DeviceInfo.";
+        obj.multi_instance = false;
+        obj.params = {param};
+        obj.commands = {cmd};
+        obj.events = {event};
+        obj.unique_key_sets = {{"SerialNumber"}};
+
+        SupportedDMResult result;
+        result.requested_path = "Device.DeviceInfo.";
+        result.objects = {obj};
+
+        GetSupportedDMResp gr;
+        gr.results = {result};
+
+        Response resp;
+        resp.resp_type = std::move(gr);
+
+        Body body;
+        body.msg_body = std::move(resp);
+
+        Msg msg;
+        msg.header = Header{"54", MsgType::GetSupportedDmResp};
+        msg.body = std::move(body);
+
+        auto decoded = Msg::decode(msg.encode());
+        CHECK(decoded.has_value());
+        auto* r = std::get_if<Response>(&decoded->body->msg_body);
+        auto* g = r ? std::get_if<GetSupportedDMResp>(&r->resp_type) : nullptr;
+        CHECK(g != nullptr);
+        if (g && g->results.size() == 1 && g->results[0].objects.size() == 1) {
+            const auto& o = g->results[0].objects[0];
+            CHECK_EQ(o.params.size(), 1u);
+            CHECK_EQ(o.commands.size(), 1u);
+            CHECK_EQ(o.events.size(), 1u);
+            CHECK_EQ(o.unique_key_sets,
+                     std::vector<std::vector<std::string>>{{"SerialNumber"}});
+            if (!o.params.empty()) {
+                CHECK_EQ(o.params[0].name, "SerialNumber");
+                CHECK_EQ(o.params[0].value_type, 8);
+            }
+        }
+    }
+
+    /* GetInstancesResp with unique keys. */
+    {
+        InstanceInfo inst;
+        inst.path = "Device.X.1.";
+        inst.unique_keys = {{"ID", "7"}};
+
+        InstancesResult result;
+        result.requested_path = "Device.X.";
+        result.instances = {inst};
+
+        GetInstancesResp gr;
+        gr.results = {result};
+
+        Response resp;
+        resp.resp_type = std::move(gr);
+
+        Body body;
+        body.msg_body = std::move(resp);
+
+        Msg msg;
+        msg.header = Header{"55", MsgType::GetInstancesResp};
+        msg.body = std::move(body);
+
+        auto decoded = Msg::decode(msg.encode());
+        CHECK(decoded.has_value());
+        auto* r = std::get_if<Response>(&decoded->body->msg_body);
+        auto* g = r ? std::get_if<GetInstancesResp>(&r->resp_type) : nullptr;
+        CHECK(g != nullptr);
+        if (g && g->results.size() == 1 && g->results[0].instances.size() == 1) {
+            const auto& in = g->results[0].instances[0];
+            CHECK_EQ(in.path, "Device.X.1.");
+            auto it = in.unique_keys.find("ID");
+            CHECK(it != in.unique_keys.end());
+            if (it != in.unique_keys.end()) CHECK_EQ(it->second, "7");
+        }
+    }
+
+    /* GetSupportedProtocolResp versions string. */
+    {
+        GetSupportedProtocolResp gr;
+        gr.agent_versions = "1.5";
+
+        Response resp;
+        resp.resp_type = std::move(gr);
+
+        Body body;
+        body.msg_body = std::move(resp);
+
+        Msg msg;
+        msg.header = Header{"56", MsgType::GetSupportedProtoResp};
+        msg.body = std::move(body);
+
+        auto decoded = Msg::decode(msg.encode());
+        CHECK(decoded.has_value());
+        auto* r = std::get_if<Response>(&decoded->body->msg_body);
+        auto* g = r ? std::get_if<GetSupportedProtocolResp>(&r->resp_type) : nullptr;
+        CHECK(g != nullptr);
+        if (g) CHECK_EQ(g->agent_versions, "1.5");
+    }
+}
+
 int main() {
     test_record_roundtrip();
     test_msg_get_roundtrip();
     test_msg_response_roundtrip();
     test_notify_usp_1_5_tags();
+    test_new_request_roundtrips();
+    test_new_response_roundtrips();
 
     std::printf("test_proto: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

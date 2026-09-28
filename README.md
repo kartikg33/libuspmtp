@@ -107,12 +107,12 @@ The library is designed with long-running processes, constrained systems, asynch
 | USP OPERATE | ✅ |
 | USP SUBSCRIBE_AND_GET | ✅ |
 | USP SUBSCRIBE_MANY_AND_GET | ✅ |
-| USP REGISTER | 🚧 |
-| USP ADD | 🚧 |
-| USP DELETE | 🚧 |
-| USP GET_SUPPORTED_DM | 🚧 |
-| USP GET_INSTANCES | 🚧 |
-| USP GET_SUPPORTED_PROTOCOL | 🚧 |
+| USP REGISTER | ✅ |
+| USP ADD | ✅ |
+| USP DELETE | ✅ |
+| USP GET_SUPPORTED_DM | ✅ |
+| USP GET_INSTANCES | ✅ |
+| USP GET_SUPPORTED_PROTOCOL | ✅ |
 | C-compatible public API | ✅ |
 | C++20 implementation | ✅ |
 | Static library | ✅ |
@@ -143,12 +143,12 @@ The library is designed with long-running processes, constrained systems, asynch
 | `usp_controller_subscribe_many_and_get()` | ✅ | Create multiple subscriptions and retrieve state |
 | `usp_controller_last_error()` | ✅ | Retrieve the last human-readable error |
 | `usp_error_is_vendor_defined()` | ✅ | Test whether a USP error code is vendor-defined |
-| `usp_controller_register()` | 🚧 | Register controller |
-| `usp_controller_add()` | 🚧 | Create object instance |
-| `usp_controller_delete()` | 🚧 | Delete object instance |
-| `usp_controller_get_supported_dm()` | 🚧 | Query supported data model |
-| `usp_controller_get_instances()` | 🚧 | Query object instances |
-| `usp_controller_get_supported_protocol()` | 🚧 | Query supported USP protocol |
+| `usp_controller_register()` | ✅ | Register a data-model path (agent support varies) |
+| `usp_controller_add()` | ✅ | Create object instance |
+| `usp_controller_delete()` | ✅ | Delete object instance |
+| `usp_controller_get_supported_dm()` | ✅ | Query supported data model |
+| `usp_controller_get_instances()` | ✅ | Query object instances |
+| `usp_controller_get_supported_protocol()` | ✅ | Query supported USP protocol |
 
 APIs marked as planned currently return `USP_ERR_USP`.
 
@@ -763,6 +763,102 @@ Object Deletion
 
 ---
 
+## REGISTER
+
+Register a data-model path on the agent:
+
+```c
+usp_controller_register(
+    controller,
+    "Device.DeviceInfo.",
+    buffer,
+    sizeof(buffer)
+);
+```
+
+> **Note:** some agents do not implement this message type. The OB-USPA
+> broker path, for example, answers `REGISTER` with USP error 7002
+> (request denied). The library surfaces that as a clean
+> `USP_ERR_USP` with details in `usp_controller_last_error()`.
+
+---
+
+## ADD
+
+Create an object instance, then delete it again:
+
+```c
+const char* paths[]  = { "Enable", "Alias" };
+const char* values[] = { "true", "my-sub" };
+
+usp_controller_add(
+    controller,
+    "Device.LocalAgent.Subscription.",
+    paths,
+    values,
+    2,
+    buffer,
+    sizeof(buffer)
+);
+
+/* buffer receives e.g. "CREATED\t...\tDevice.LocalAgent.Subscription.4.\n" */
+
+usp_controller_delete(
+    controller,
+    "Device.LocalAgent.Subscription.4.",
+    buffer,
+    sizeof(buffer)
+);
+```
+
+Parameter names may be relative (`"Enable"`) or full paths under `obj`.
+
+---
+
+## GET_SUPPORTED_DM
+
+Query the parameters, commands, and events the agent supports below a path:
+
+```c
+usp_controller_get_supported_dm(
+    controller,
+    "Device.DeviceInfo.",
+    buffer,
+    sizeof(buffer)
+);
+```
+
+---
+
+## GET_INSTANCES
+
+Query current instances and their unique keys:
+
+```c
+usp_controller_get_instances(
+    controller,
+    "Device.LocalAgent.Controller.",
+    buffer,
+    sizeof(buffer)
+);
+```
+
+---
+
+## GET_SUPPORTED_PROTOCOL
+
+Query the USP versions the agent supports:
+
+```c
+usp_controller_get_supported_protocol(
+    controller,
+    buffer,
+    sizeof(buffer)
+);
+```
+
+---
+
 # 🧪 Testing
 
 Run the complete test suite with:
@@ -976,6 +1072,8 @@ do not open a public issue.
 - [x] USP SET
 - [x] USP OPERATE
 - [x] USP subscriptions
+- [x] USP REGISTER / ADD / DELETE
+- [x] USP GET_SUPPORTED_DM / GET_INSTANCES / GET_SUPPORTED_PROTOCOL
 - [x] UDS transport
 - [x] Static library
 - [x] Shared library
@@ -985,12 +1083,6 @@ do not open a public issue.
 
 ### Next
 
-- [ ] REGISTER
-- [ ] ADD
-- [ ] DELETE
-- [ ] GET_SUPPORTED_DM
-- [ ] GET_INSTANCES
-- [ ] GET_SUPPORTED_PROTOCOL
 - [ ] Expanded transport support
 - [ ] TSan CI
 - [ ] API/ABI compatibility CI

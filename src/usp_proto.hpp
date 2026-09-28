@@ -219,6 +219,147 @@ struct AddResp {
     std::vector<CreatedObjectResult> created_obj_results;
 };
 
+struct Delete {
+    bool allow_partial{false};
+    std::vector<std::string> obj_paths;
+};
+
+struct DeleteOperationFailure {
+    uint32_t err_code{0};
+    std::string err_msg;
+};
+
+struct UnaffectedPathError {
+    std::string path;
+    uint32_t err_code{0};
+    std::string err_msg;
+};
+
+struct DeleteOperationSuccess {
+    std::vector<std::string> affected_paths;
+    std::vector<UnaffectedPathError> unaffected_errors;
+};
+
+struct DeleteOperationStatus {
+    std::variant<std::monostate, DeleteOperationFailure, DeleteOperationSuccess> oper_status;
+};
+
+struct DeletedObjectResult {
+    std::string requested_path;
+    std::optional<DeleteOperationStatus> oper_status;
+};
+
+struct DeleteResp {
+    std::vector<DeletedObjectResult> deleted_obj_results;
+};
+
+struct Register {
+    bool allow_partial{false};
+    std::vector<std::string> reg_paths;
+};
+
+struct RegisterOperationFailure {
+    uint32_t err_code{0};
+    std::string err_msg;
+};
+
+struct RegisterOperationSuccess {
+    std::string registered_path;
+};
+
+struct RegisterOperationStatus {
+    std::variant<std::monostate, RegisterOperationFailure, RegisterOperationSuccess> oper_status;
+};
+
+struct RegisteredPathResult {
+    std::string requested_path;
+    std::optional<RegisterOperationStatus> oper_status;
+};
+
+struct RegisterResp {
+    std::vector<RegisteredPathResult> registered_path_results;
+};
+
+struct GetSupportedDM {
+    std::vector<std::string> obj_paths;
+    bool first_level_only{false};
+    bool return_commands{true};
+    bool return_events{true};
+    bool return_params{true};
+    bool return_unique_key_sets{true};
+};
+
+struct SupportedParamInfo {
+    std::string name;
+    int access{0};       ///< ParamAccessType numeric value (0=read-only, 1=read-write, 2=write-only)
+    int value_type{0};   ///< ParamValueType numeric value (0=unknown, 8=string, ...)
+    int value_change{0}; ///< ValueChangeType numeric value (0=unknown, 1=allowed, 2=will-ignore)
+};
+
+struct SupportedCommandInfo {
+    std::string name;
+    std::vector<std::string> input_args;
+    std::vector<std::string> output_args;
+    int command_type{0}; ///< CmdType numeric value (0=unknown, 1=sync, 2=async)
+};
+
+struct SupportedEventInfo {
+    std::string name;
+    std::vector<std::string> arg_names;
+};
+
+struct SupportedObjectInfo {
+    std::string path;
+    int access{0}; ///< ObjAccessType numeric value (0=read-only, 1=add-delete, 2=add-only, 3=delete-only)
+    bool multi_instance{false};
+    std::vector<SupportedCommandInfo> commands;
+    std::vector<SupportedEventInfo> events;
+    std::vector<SupportedParamInfo> params;
+    std::vector<std::string> divergent_paths;
+    std::vector<std::vector<std::string>> unique_key_sets;
+};
+
+struct SupportedDMResult {
+    std::string requested_path;
+    uint32_t err_code{0};
+    std::string err_msg;
+    std::string data_model_uri;
+    std::vector<SupportedObjectInfo> objects;
+};
+
+struct GetSupportedDMResp {
+    std::vector<SupportedDMResult> results;
+};
+
+struct GetInstances {
+    std::vector<std::string> obj_paths;
+    bool first_level_only{false};
+};
+
+struct InstanceInfo {
+    std::string path;
+    std::map<std::string, std::string> unique_keys;
+};
+
+struct InstancesResult {
+    std::string requested_path;
+    uint32_t err_code{0};
+    std::string err_msg;
+    std::vector<InstanceInfo> instances;
+};
+
+struct GetInstancesResp {
+    std::vector<InstancesResult> results;
+};
+
+struct GetSupportedProtocol {
+    std::string controller_versions;
+};
+
+struct GetSupportedProtocolResp {
+    std::string agent_versions;
+};
+
 struct ValueChange {
     std::string param_path;
     std::string param_value;
@@ -243,13 +384,15 @@ struct NotifyResp {
     std::string subscription_id;
 };
 
-using RequestVariant = std::variant<std::monostate, Get, Set, Add, Operate, Notify>;
+using RequestVariant = std::variant<std::monostate, Get, Set, Add, Operate, Notify,
+    Delete, Register, GetSupportedDM, GetInstances, GetSupportedProtocol>;
 
 struct Request {
     RequestVariant req_type;
 };
 
-using ResponseVariant = std::variant<std::monostate, GetResp, SetResp, AddResp, OperateResp, NotifyResp>;
+using ResponseVariant = std::variant<std::monostate, GetResp, SetResp, AddResp, OperateResp, NotifyResp,
+    DeleteResp, RegisterResp, GetSupportedDMResp, GetInstancesResp, GetSupportedProtocolResp>;
 
 struct Response {
     ResponseVariant resp_type;

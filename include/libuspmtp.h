@@ -55,7 +55,8 @@
  * After USP_ERR_USP, call usp_controller_last_error() to retrieve a
  * human-readable description of the error.
  *
- * Response encoding (get_many, set_many, operate, subscribe_*_and_get)
+ * Response encoding (get_many, set_many, operate, subscribe_*_and_get,
+ *   register, add, delete, get_supported_dm, get_instances)
  * ---------------------------------------------------------------------
  * The multi-valued response functions write a TSV-like text format to the
  * caller-supplied output buffer.  Each line ends with '\n'.  Fields within a
@@ -72,6 +73,42 @@
  *
  *   OPERATE response lines:
  *     "OUTPUT\t<key>\t<value>\n"
+ *
+ *   REGISTER response lines:
+ *     "REGISTERED\t<requested_path>\t<registered_path>\n"
+ *     "ERROR\t<path>\t<err_code>\t<err_msg>\n"
+ *
+ *   ADD response lines:
+ *     "CREATED\t<requested_path>\t<instantiated_path>\n"
+ *     "KEY\t<instantiated_path>\t<key_name>\t<key_value>\n"
+ *     "ERROR\t<path>\t<err_code>\t<err_msg>\n"
+ *
+ *   DELETE response lines:
+ *     "DELETED\t<requested_path>\t<affected_path>\n"
+ *     "ERROR\t<path>\t<err_code>\t<err_msg>\n"
+ *
+ *   GET_SUPPORTED_DM response lines:
+ *     "DMOBJ\t<requested_path>\t<supported_path>\t<access>\t<is_multi>\n"
+ *     "DMPARAM\t<supported_path>\t<param>\t<access>\t<value_type>\t<value_change>\n"
+ *     "DMCMD\t<supported_path>\t<command>\t<command_type>\n"
+ *     "DMEVENT\t<supported_path>\t<event>\n"
+ *     "DMKEYSET\t<supported_path>\t<key1,key2,...>\n"
+ *     "ERROR\t<path>\t<err_code>\t<err_msg>\n"
+ *
+ *   Numeric access/type fields use the TR-369 enumeration values:
+ *     access:       0=read-only, 1=read-write / add-delete, 2=write-only / add-only,
+ *                   3=delete-only (objects)
+ *     value_type:   0=unknown, 1=base64, 2=boolean, 3=date-time, 4=decimal,
+ *                   5=hex-binary, 6=int, 7=long, 8=string, 9=unsigned-int,
+ *                   10=unsigned-long
+ *     value_change: 0=unknown, 1=allowed, 2=will-ignore
+ *     command_type: 0=unknown, 1=sync, 2=async
+ *     is_multi:     0=single instance, 1=multi-instance
+ *
+ *   GET_INSTANCES response lines:
+ *     "INSTANCE\t<requested_path>\t<instantiated_path>\n"
+ *     "KEY\t<instantiated_path>\t<key_name>\t<key_value>\n"
+ *     "ERROR\t<path>\t<err_code>\t<err_msg>\n"
  *
  * Subscription notification type constants
  * -----------------------------------------
@@ -478,17 +515,49 @@ int usp_controller_subscribe_many_and_get(
 /*
  * usp_controller_register
  *
- * Send a USP REGISTER request (not yet implemented; returns USP_ERR_USP).
+ * Send a USP REGISTER request to register a data-model path on the agent.
+ *
+ * Parameters:
+ *   handle         – non-NULL handle.
+ *   obj            – NUL-terminated data-model path to register.
+ *   out_result     – caller-supplied buffer for the encoded response text
+ *                    (REGISTERED lines; see response encoding above).
+ *                    May be NULL only if out_result_len is 0.
+ *   out_result_len – size of out_result in bytes.
+ *
+ * Returns: USP_OK or an error code.
+ * Blocking: yes.
  */
 LIBUSP_API
 int usp_controller_register(
     struct UspControllerHandle *handle,
-    const char *obj);
+    const char *obj,
+    char       *out_result,
+    size_t      out_result_len);
 
 /*
  * usp_controller_add
  *
- * Send a USP ADD request (not yet implemented; returns USP_ERR_USP).
+ * Send a USP ADD request to create a new object instance on the agent.
+ *
+ * Parameters:
+ *   handle       – non-NULL handle.
+ *   obj          – NUL-terminated collection object path to add to
+ *                  (e.g. "Device.LocalAgent.Subscription.").
+ *   param_paths  – array of parameter names (relative, e.g. "Enable") or
+ *                  full paths under obj; a full path is reduced to its
+ *                  trailing parameter name.  May be NULL if param_count
+ *                  is 0.
+ *   param_values – array of values parallel to param_paths.
+ *                  May be NULL if param_count is 0.
+ *   param_count  – number of entries.
+ *   out_result   – caller-supplied buffer for the encoded response text
+ *                  (CREATED / KEY lines; see response encoding above).
+ *                  May be NULL only if out_result_len is 0.
+ *   out_result_len – size of out_result in bytes.
+ *
+ * Returns: USP_OK or an error code.
+ * Blocking: yes.
  */
 LIBUSP_API
 int usp_controller_add(
@@ -496,46 +565,104 @@ int usp_controller_add(
     const char                 *obj,
     const char *const          *param_paths,
     const char *const          *param_values,
-    size_t                      param_count);
+    size_t                      param_count,
+    char                       *out_result,
+    size_t                      out_result_len);
 
 /*
  * usp_controller_delete
  *
- * Send a USP DELETE request (not yet implemented; returns USP_ERR_USP).
+ * Send a USP DELETE request to delete an object instance on the agent.
+ *
+ * Parameters:
+ *   handle         – non-NULL handle.
+ *   instance       – NUL-terminated instance path to delete
+ *                    (e.g. "Device.LocalAgent.Subscription.3.").
+ *   out_result     – caller-supplied buffer for the encoded response text
+ *                    (DELETED lines; see response encoding above).
+ *                    May be NULL only if out_result_len is 0.
+ *   out_result_len – size of out_result in bytes.
+ *
+ * Returns: USP_OK or an error code.
+ * Blocking: yes.
  */
 LIBUSP_API
 int usp_controller_delete(
     struct UspControllerHandle *handle,
-    const char *instance);
+    const char *instance,
+    char       *out_result,
+    size_t      out_result_len);
 
 /*
  * usp_controller_get_supported_dm
  *
- * Send a USP GetSupportedDM request (not yet implemented; returns USP_ERR_USP).
+ * Send a USP GetSupportedDM request to query the agent's supported data
+ * model below an object path.
+ *
+ * Parameters:
+ *   handle         – non-NULL handle.
+ *   obj            – NUL-terminated object path to query.
+ *   out_result     – caller-supplied buffer for the encoded response text
+ *                    (DMOBJ / DMPARAM / DMCMD / DMEVENT / DMKEYSET lines;
+ *                    see response encoding above).
+ *                    May be NULL only if out_result_len is 0.
+ *   out_result_len – size of out_result in bytes.
+ *
+ * Returns: USP_OK or an error code.
+ * Blocking: yes.
  */
 LIBUSP_API
 int usp_controller_get_supported_dm(
     struct UspControllerHandle *handle,
-    const char *obj);
+    const char *obj,
+    char       *out_result,
+    size_t      out_result_len);
 
 /*
  * usp_controller_get_instances
  *
- * Send a USP GetInstances request (not yet implemented; returns USP_ERR_USP).
+ * Send a USP GetInstances request to query the current instances below
+ * an object path, including their unique keys.
+ *
+ * Parameters:
+ *   handle         – non-NULL handle.
+ *   obj            – NUL-terminated object path to query.
+ *   out_result     – caller-supplied buffer for the encoded response text
+ *                    (INSTANCE / KEY lines; see response encoding above).
+ *                    May be NULL only if out_result_len is 0.
+ *   out_result_len – size of out_result in bytes.
+ *
+ * Returns: USP_OK or an error code.
+ * Blocking: yes.
  */
 LIBUSP_API
 int usp_controller_get_instances(
     struct UspControllerHandle *handle,
-    const char *obj);
+    const char *obj,
+    char       *out_result,
+    size_t      out_result_len);
 
 /*
  * usp_controller_get_supported_protocol
  *
- * Send a USP GetSupportedProtocol request (not yet implemented; returns USP_ERR_USP).
+ * Send a USP GetSupportedProtocol request to query the USP versions the
+ * agent supports.  This library speaks version 1.5.
+ *
+ * Parameters:
+ *   handle        – non-NULL handle.
+ *   out_value     – caller-supplied buffer to receive the NUL-terminated
+ *                   comma-separated version string (e.g. "1.5").
+ *                   May be NULL only if out_value_len is 0.
+ *   out_value_len – size of out_value in bytes, including space for the NUL.
+ *
+ * Returns: USP_OK or an error code.
+ * Blocking: yes.
  */
 LIBUSP_API
 int usp_controller_get_supported_protocol(
-    struct UspControllerHandle *handle);
+    struct UspControllerHandle *handle,
+    char                       *out_value,
+    size_t                      out_value_len);
 
 /*
  * usp_controller_set_timeout

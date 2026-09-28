@@ -147,6 +147,65 @@ struct OperateResponse {
     std::map<std::string, std::string> output_args;
 };
 
+/** Response returned by register_obj(). */
+struct RegisterResponse {
+    struct RegisteredPath {
+        std::string requested_path;
+        std::string registered_path;
+    };
+    std::vector<RegisteredPath> registered;
+    std::vector<PathError>      errors;
+};
+
+/** Response returned by add(). */
+struct AddResponse {
+    struct CreatedObject {
+        std::string requested_path;
+        std::string instantiated_path;
+        std::map<std::string, std::string> unique_keys;
+    };
+    std::vector<CreatedObject> created;
+    std::vector<PathError>     errors;
+};
+
+/** Response returned by delete_instance(). */
+struct DeleteResponse {
+    struct DeletedObject {
+        std::string requested_path;
+        std::vector<std::string> affected_paths;
+    };
+    std::vector<DeletedObject> deleted;
+    std::vector<PathError>     errors;
+};
+
+/** Response returned by get_supported_dm(). */
+struct GetSupportedDMResponse {
+    struct Result {
+        std::string requested_path;
+        uint32_t err_code{0};
+        std::string err_msg;
+        std::string data_model_uri;
+        std::vector<proto::SupportedObjectInfo> objects;
+    };
+    std::vector<Result> results;
+};
+
+/** Response returned by get_instances(). */
+struct GetInstancesResponse {
+    struct Result {
+        std::string requested_path;
+        uint32_t err_code{0};
+        std::string err_msg;
+        std::vector<proto::InstanceInfo> instances;
+    };
+    std::vector<Result> results;
+};
+
+/** Response returned by get_supported_protocol(). */
+struct GetSupportedProtocolResponse {
+    std::string agent_versions;
+};
+
 /* ── Result type ────────────────────────────────────────────────────────── */
 
 template<typename T>
@@ -185,6 +244,12 @@ public:
                   std::string app_endpoint_id,
                   std::string agent_endpoint_id);
 
+    /**
+     * Destructor: stops the session worker (if any) and joins it, so no
+     * background thread can outlive the last controller copy.
+     */
+    ~UspController();
+
     /** Set the per-request timeout (default: 10 seconds). */
     void set_timeout(std::chrono::seconds timeout);
 
@@ -218,15 +283,30 @@ public:
         const std::vector<std::pair<std::string, SubscriptionNotificationType>>& subs,
         std::function<void()> callback);
 
-    /* ── Not-yet-implemented stubs ───────────────────────────────────── */
+    /* ── REGISTER ──────────────────────────────────────────────────────── */
 
-    UspError register_obj(const std::string& obj);
-    UspError add(const std::string& obj,
-                 const std::vector<std::pair<std::string,std::string>>& params);
-    UspError delete_instance(const std::string& instance);
-    UspError get_supported_dm(const std::string& obj);
-    UspError get_instances(const std::string& obj);
-    UspError get_supported_protocol();
+    UspResult<RegisterResponse> register_obj(const std::string& obj);
+
+    /* ── ADD ───────────────────────────────────────────────────────────── */
+
+    UspResult<AddResponse> add(const std::string& obj,
+        const std::vector<std::pair<std::string,std::string>>& params);
+
+    /* ── DELETE ────────────────────────────────────────────────────────── */
+
+    UspResult<DeleteResponse> delete_instance(const std::string& instance);
+
+    /* ── GET_SUPPORTED_DM ──────────────────────────────────────────────── */
+
+    UspResult<GetSupportedDMResponse> get_supported_dm(const std::string& obj);
+
+    /* ── GET_INSTANCES ─────────────────────────────────────────────────── */
+
+    UspResult<GetInstancesResponse> get_instances(const std::string& obj);
+
+    /* ── GET_SUPPORTED_PROTOCOL ────────────────────────────────────────── */
+
+    UspResult<GetSupportedProtocolResponse> get_supported_protocol();
 
     /* ── Session worker command/reply types (public for free-function access) */
 

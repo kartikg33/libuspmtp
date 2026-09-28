@@ -216,16 +216,31 @@ static void test_handshake_and_send_recv() {
         int cli_fd = ::accept(srv_fd, nullptr, nullptr);
         if (cli_fd < 0) { ::close(srv_fd); return; }
 
+        /* Loop reads to completion: bare ::read may return partial data. */
+        auto read_all = [&](void* buf, size_t len) -> bool {
+            size_t got = 0;
+            while (got < len) {
+                ssize_t n = ::read(cli_fd, (char*)buf + got, len - got);
+                if (n <= 0) return false;
+                got += (size_t)n;
+            }
+            return true;
+        };
+
         /* Read client handshake frame. */
         uint8_t sync[4];
-        ::read(cli_fd, sync, 4);
+        if (!read_all(sync, 4)) { ::close(cli_fd); ::close(srv_fd); return; }
 
         uint8_t olen_buf[4];
-        ::read(cli_fd, olen_buf, 4);
+        if (!read_all(olen_buf, 4)) { ::close(cli_fd); ::close(srv_fd); return; }
         uint32_t outer_len = (olen_buf[0] << 24) | (olen_buf[1] << 16) |
-                             (olen_buf[2] << 8)  | olen_buf[3];
+                              (olen_buf[2] << 8)  | olen_buf[3];
         std::vector<uint8_t> hs(outer_len);
-        ::read(cli_fd, hs.data(), outer_len);
+        if (!read_all(hs.data(), outer_len)) {
+            ::close(cli_fd);
+            ::close(srv_fd);
+            return;
+        }
 
         /* Send server handshake response. */
         std::string server_id = "proto::server";
@@ -247,12 +262,16 @@ static void test_handshake_and_send_recv() {
 
         /* Read a USP Record frame from client. */
         uint8_t sync2[4];
-        ::read(cli_fd, sync2, 4);
+        if (!read_all(sync2, 4)) { ::close(cli_fd); ::close(srv_fd); return; }
         uint8_t olen2[4];
-        ::read(cli_fd, olen2, 4);
+        if (!read_all(olen2, 4)) { ::close(cli_fd); ::close(srv_fd); return; }
         uint32_t ol2 = (olen2[0]<<24)|(olen2[1]<<16)|(olen2[2]<<8)|olen2[3];
         std::vector<uint8_t> payload2(ol2);
-        ::read(cli_fd, payload2.data(), ol2);
+        if (!read_all(payload2.data(), ol2)) {
+            ::close(cli_fd);
+            ::close(srv_fd);
+            return;
+        }
 
         /* Echo back a USP Record frame. */
         uint32_t vlen = rec_bytes.size();
