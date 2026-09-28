@@ -885,11 +885,10 @@ Potential integrations include:
 |---|---|:---:|
 | C | Native C ABI | ✅ |
 | C++ | Native C ABI | ✅ |
+| Rust | C FFI | ✅ |
 | Python | CFFI / ctypes / extension | 🚧 |
 | Go | cgo | 🚧 |
-| Rust | C FFI | ✅ |
 | Java | JNI / Panama | 🚧 |
-| C# | P/Invoke | 🚧 |
 
 Language-specific bindings should remain thin wrappers around the stable C ABI.
 
